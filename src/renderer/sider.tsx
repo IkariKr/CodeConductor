@@ -22,6 +22,7 @@ const Sider: React.FC<SiderProps> = ({ onSessionClick, collapsed = false }) => {
   const navigate = useNavigate();
   const { closePreview } = usePreviewContext();
   const isSettings = pathname.startsWith('/settings');
+  const isRebuildChat = pathname.startsWith('/rebuildchat');
   const lastNonSettingsPathRef = useRef('/guid');
 
   useEffect(() => {
@@ -67,6 +68,23 @@ const Sider: React.FC<SiderProps> = ({ onSessionClick, collapsed = false }) => {
             >
               <Plus theme='outline' size='24' fill={iconColors.primary} className='flex' />
               <span className='collapsed-hidden font-bold text-t-primary'>{t('conversation.welcome.newConversation')}</span>
+            </div>
+          </Tooltip>
+          <Tooltip disabled={!collapsed} content='RebuildChat' position='right'>
+            <div
+              className={`flex items-center justify-start gap-10px px-12px py-8px rd-0.5rem mb-8px cursor-pointer group ${isRebuildChat ? 'bg-hover' : 'hover:bg-hover'}`}
+              onClick={() => {
+                closePreview();
+                Promise.resolve(navigate('/rebuildchat')).catch((error) => {
+                  console.error('Navigation failed:', error);
+                });
+                if (onSessionClick) {
+                  onSessionClick();
+                }
+              }}
+            >
+              <div className='flex size-24px items-center justify-center rounded-full bg-[var(--color-fill-2)] text-12px font-bold text-t-primary'>R</div>
+              <span className='collapsed-hidden font-bold text-t-primary'>RebuildChat</span>
             </div>
           </Tooltip>
           {!collapsed && <ProjectModePanel />}

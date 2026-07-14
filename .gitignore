@@ -139,6 +139,7 @@ out/
 debug.log
 test-*.js
 diagnose-*.js
+tmp-rebuildchat-*.png
 
 .gemini/
 gha-creds-*.json

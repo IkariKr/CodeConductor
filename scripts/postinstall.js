@@ -29,7 +29,6 @@ function runPostInstall() {
         stdio: 'inherit',
         env: {
           ...process.env,
-          npm_config_build_from_source: 'true'
         }
       });
     }

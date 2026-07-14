@@ -231,6 +231,16 @@ This fork focuses on making command-line coding agents easier to use in real pro
 - **Project-first conversations with workspace context** - Task-driven, artifact-oriented project sessions with workspace context.
 - **Review-friendly workflow** - Preview and diff are treated as first-class citizens to reduce review friction.
 
+### RebuildChat workbench (current fork focus)
+
+This fork also includes an in-progress `RebuildChat` page aimed at replaying and refining local prompt conversations against a coding agent workflow.
+
+- **Import structured JSON prompt files** - Parse `chunkedPrompt.chunks` input and filter by one or more `role` values.
+- **Editable send queue** - Delete, modify, or append queue items before execution while keeping the original order by default.
+- **Local `agy` execution loop** - First turn starts with `--new-project`, later turns continue with the captured conversation ID.
+- **Workspace-output observation** - Detect created, updated, and deleted files after each turn to decide whether execution should continue.
+- **Single-page control flow** - Current UI centers around import, edit, run, observe, pause, resume, and abort in one workbench view.
+
 ---
 
 ## Core features
@@ -315,6 +325,25 @@ _Customize with your own CSS code, make your interface match your preferences_
 ```bash
 npm install
 npm start
+```
+
+### Run RebuildChat quickly on Windows
+
+Recommended environment for this fork:
+
+- Node.js `24.x` (`24.14.0` verified)
+- Windows PowerShell or Command Prompt
+
+One-click startup helper:
+
+```bat
+start-rebuildchat.cmd
+```
+
+Environment check only:
+
+```bat
+start-rebuildchat.cmd --check
 ```
 
 ### WebUI mode (developers or headless)

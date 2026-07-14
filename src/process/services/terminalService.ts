@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { IPty } from 'node-pty';
-import { spawn } from 'node-pty';
+import type { ChildProcessWithoutNullStreams } from 'child_process';
+import { spawn } from 'child_process';
 import path from 'path';
 import { uuid } from '@/common/utils';
 
@@ -24,7 +24,7 @@ export interface TerminalEvents {
 }
 
 export class TerminalService {
-  private terminals = new Map<string, IPty>();
+  private terminals = new Map<string, ChildProcessWithoutNullStreams>();
   private terminalCwds = new Map<string, string>();
   private events: TerminalEvents;
 
@@ -35,31 +35,36 @@ export class TerminalService {
   spawnTerminal(options: TerminalSpawnOptions = {}): string {
     const terminalId = uuid();
     const shell = options.shell || this.resolveDefaultShell();
-    const args = options.args || [];
-    const cols = options.cols ?? 80;
-    const rows = options.rows ?? 24;
+    const args = options.args || this.resolveDefaultArgs(shell);
     const env = { ...process.env, ...(options.env || {}) };
     const cwd = options.cwd || process.cwd();
 
-    const ptyProcess = spawn(shell, args, {
-      name: 'xterm-256color',
-      cols,
-      rows,
+    const child = spawn(shell, args, {
       cwd,
       env,
+      stdio: 'pipe',
+      windowsHide: true,
     });
 
-    ptyProcess.onData((data) => {
-      this.events.onData(terminalId, data);
+    child.stdout.on('data', (data: Buffer | string) => {
+      this.events.onData(terminalId, data.toString());
     });
 
-    ptyProcess.onExit((event) => {
+    child.stderr.on('data', (data: Buffer | string) => {
+      this.events.onData(terminalId, data.toString());
+    });
+
+    child.on('exit', (exitCode, signal) => {
       this.terminals.delete(terminalId);
       this.terminalCwds.delete(terminalId);
-      this.events.onExit(terminalId, event.exitCode ?? null, event.signal);
+      this.events.onExit(terminalId, exitCode ?? null, typeof signal === 'number' ? signal : undefined);
     });
 
-    this.terminals.set(terminalId, ptyProcess);
+    child.on('error', (error) => {
+      this.events.onData(terminalId, `\r\n[Terminal error] ${error.message}\r\n`);
+    });
+
+    this.terminals.set(terminalId, child);
     this.terminalCwds.set(terminalId, cwd);
     return terminalId;
   }
@@ -67,13 +72,11 @@ export class TerminalService {
   write(terminalId: string, data: string): void {
     const terminal = this.terminals.get(terminalId);
     if (!terminal) return;
-    terminal.write(data);
+    terminal.stdin.write(data);
   }
 
-  resize(terminalId: string, cols: number, rows: number): void {
-    const terminal = this.terminals.get(terminalId);
-    if (!terminal) return;
-    terminal.resize(cols, rows);
+  resize(_terminalId: string, _cols: number, _rows: number): void {
+    // No-op in the child_process-backed fallback implementation.
   }
 
   dispose(terminalId: string): void {
@@ -118,6 +121,17 @@ export class TerminalService {
       return process.env.COMSPEC || 'powershell.exe';
     }
     return process.env.SHELL || 'bash';
+  }
+
+  private resolveDefaultArgs(shell: string): string[] {
+    const normalizedShell = path.basename(shell).toLowerCase();
+    if (process.platform === 'win32') {
+      if (normalizedShell === 'powershell.exe' || normalizedShell === 'pwsh.exe') {
+        return ['-NoLogo'];
+      }
+      return [];
+    }
+    return normalizedShell === 'bash' || normalizedShell === 'zsh' ? ['-i'] : [];
   }
 
   private normalizePath(value: string): string {

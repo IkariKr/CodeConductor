@@ -8,7 +8,6 @@ import About from './pages/settings/About';
 import AgentSettings from './pages/settings/AgentSettings';
 import DisplaySettings from './pages/settings/DisplaySettings';
 import ModeSettings from './pages/settings/ModeSettings';
-import CliProviderSettings from './pages/settings/CliProviderSettings';
 import SkillSettings from './pages/settings/SkillSettings';
 import SystemSettings from './pages/settings/SystemSettings';
 import ToolsSettings from './pages/settings/ToolsSettings';
@@ -17,6 +16,7 @@ import MemorySettings from './pages/settings/MemorySettings';
 import CommandSettings from './pages/settings/CommandSettings';
 import LoginPage from './pages/login';
 import ComponentsShowcase from './pages/test/ComponentsShowcase';
+import RebuildChatPage from './pages/rebuildchat';
 
 const ProtectedLayout: React.FC<{ layout: React.ReactElement }> = ({ layout }) => {
   const { status } = useAuth();
@@ -42,6 +42,7 @@ const PanelRoute: React.FC<{ layout: React.ReactElement }> = ({ layout }) => {
         <Route element={<ProtectedLayout layout={layout} />}>
           <Route index element={<Navigate to='/guid' replace />} />
           <Route path='/guid' element={<Guid />} />
+          <Route path='/rebuildchat' element={<RebuildChatPage />} />
           <Route path='/conversation/:id' element={<Conversation />} />
           <Route path='/settings/model' element={<ModeSettings />} />
           <Route path='/settings/providers' element={<Navigate to='/settings/model' replace />} />

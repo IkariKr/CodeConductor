@@ -1,0 +1,686 @@
+.page {
+  --rc-page-bg: #191c22;
+  --rc-page-bg-soft: #232730;
+  --rc-surface-hero: linear-gradient(140deg, rgb(249 250 252 / 97%), rgb(235 239 245 / 96%));
+  --rc-surface-panel: linear-gradient(180deg, rgb(248 249 251 / 96%), rgb(237 240 245 / 95%));
+  --rc-surface-card: linear-gradient(180deg, rgb(252 252 253 / 98%), rgb(240 243 247 / 96%));
+  --rc-surface-subtle: rgb(244 246 249 / 92%);
+  --rc-surface-strong: rgb(230 234 241 / 94%);
+  --rc-input-bg: rgb(246 247 250 / 96%);
+  --rc-input-bg-strong: rgb(255 255 255 / 98%);
+  --rc-border-soft: rgb(129 145 167 / 20%);
+  --rc-border-strong: rgb(92 110 135 / 30%);
+  --rc-text-primary: #172033;
+  --rc-text-secondary: #47556e;
+  --rc-text-tertiary: #68778f;
+  --rc-text-muted: #7a879d;
+  --rc-text-inverse: #ebf2ff;
+  --rc-accent: #245ea9;
+  --rc-accent-strong: #17457f;
+  --rc-accent-soft: rgb(222 235 255 / 92%);
+  --rc-danger: #b54545;
+  --rc-danger-soft: rgb(255 231 231 / 92%);
+  --rc-warning-bg: rgb(255 246 223 / 96%);
+  --rc-warning-border: rgb(242 196 84 / 65%);
+  --rc-warning-text: #92400e;
+  height: 100vh;
+  padding: 24px;
+  color: var(--rc-text-primary);
+  overflow: hidden;
+  background: radial-gradient(circle at top left, rgb(82 99 126 / 14%), transparent 24%), radial-gradient(circle at top right, rgb(97 122 157 / 10%), transparent 28%), linear-gradient(180deg, var(--rc-page-bg) 0%, var(--rc-page-bg-soft) 100%);
+}
+
+.page :global(.arco-card-body),
+.page :global(.arco-typography),
+.page :global(.arco-empty-description),
+.page :global(.arco-btn),
+.page :global(.arco-tag),
+.page :global(.arco-checkbox-label),
+.page :global(.arco-input),
+.page :global(.arco-textarea) {
+  color: inherit;
+}
+
+.page :global(.arco-space-item) {
+  min-width: 0;
+}
+
+.page :global(.arco-card) {
+  overflow: hidden;
+}
+
+.page :global(.arco-btn) {
+  border-radius: 14px;
+  font-weight: 600;
+  border-color: var(--rc-border-strong);
+  background: var(--rc-surface-subtle);
+  color: var(--rc-text-primary);
+  box-shadow: 0 8px 24px rgb(15 23 42 / 10%);
+}
+
+.page :global(.arco-btn:hover),
+.page :global(.arco-btn:focus-visible) {
+  border-color: rgb(58 86 128 / 45%);
+  background: rgb(251 252 255 / 98%);
+  color: var(--rc-text-primary);
+}
+
+.page :global(.arco-btn.arco-btn-primary) {
+  border-color: rgb(37 94 169 / 78%);
+  background: linear-gradient(180deg, #4778bc, #2a5f9d);
+  color: #f7fbff;
+  box-shadow: 0 12px 30px rgb(36 94 169 / 28%);
+}
+
+.page :global(.arco-btn.arco-btn-primary:hover),
+.page :global(.arco-btn.arco-btn-primary:focus-visible) {
+  border-color: rgb(31 79 143 / 88%);
+  background: linear-gradient(180deg, #5588cd, #2f67a8);
+  color: #fff;
+}
+
+.page :global(.arco-btn.arco-btn-secondary) {
+  background: var(--rc-surface-subtle);
+  color: var(--rc-text-primary);
+}
+
+.page :global(.arco-btn-status-danger) {
+  border-color: rgb(181 69 69 / 34%);
+  background: var(--rc-danger-soft);
+  color: var(--rc-danger);
+  box-shadow: none;
+}
+
+.page :global(.arco-btn-status-danger:hover),
+.page :global(.arco-btn-status-danger:focus-visible) {
+  border-color: rgb(181 69 69 / 50%);
+  background: rgb(255 222 222 / 98%);
+  color: #993737;
+}
+
+.page :global(.arco-input-wrapper),
+.page :global(.arco-textarea-wrapper) {
+  border-color: var(--rc-border-soft);
+  border-radius: 14px;
+  background: var(--rc-input-bg);
+}
+
+.page :global(.arco-input-wrapper:hover),
+.page :global(.arco-textarea-wrapper:hover),
+.page :global(.arco-input-wrapper-focus),
+.page :global(.arco-textarea-wrapper-focus) {
+  border-color: rgb(36 94 169 / 46%);
+  background: var(--rc-input-bg-strong);
+  box-shadow: 0 0 0 3px rgb(36 94 169 / 10%);
+}
+
+.page :global(.arco-input),
+.page :global(.arco-textarea) {
+  color: var(--rc-text-primary);
+  background: transparent;
+}
+
+.page :global(.arco-input::placeholder),
+.page :global(.arco-textarea::placeholder) {
+  color: var(--rc-text-muted);
+}
+
+.page :global(.arco-tag) {
+  border-radius: 10px;
+  border: 1px solid rgb(102 124 155 / 16%);
+  background: rgb(233 238 246 / 94%);
+  color: var(--rc-text-secondary);
+}
+
+.page :global(.arco-tag-size-medium) {
+  font-weight: 600;
+}
+
+.page :global(.arco-tag-checked),
+.page :global(.arco-tag-checkable-checked) {
+  border-color: rgb(36 94 169 / 34%);
+  background: var(--rc-accent-soft);
+  color: var(--rc-accent-strong);
+}
+
+.page :global(.arco-tag-blue) {
+  border-color: rgb(78 132 211 / 24%);
+  background: rgb(225 236 255 / 95%);
+  color: #2a5a97;
+}
+
+.page :global(.arco-tag-green) {
+  border-color: rgb(86 157 114 / 24%);
+  background: rgb(229 245 235 / 95%);
+  color: #2f6d48;
+}
+
+.page :global(.arco-tag-orange) {
+  border-color: rgb(206 132 51 / 24%);
+  background: rgb(255 239 222 / 95%);
+  color: #9b5518;
+}
+
+.page :global(.arco-tag-gray) {
+  border-color: rgb(114 128 149 / 20%);
+  background: rgb(237 240 245 / 95%);
+  color: #59677d;
+}
+
+.page :global(.arco-checkbox-mask) {
+  border-color: rgb(100 116 139 / 40%);
+  background: rgb(255 255 255 / 94%);
+}
+
+.page :global(.arco-checkbox-checked .arco-checkbox-mask),
+.page :global(.arco-checkbox-indeterminate .arco-checkbox-mask) {
+  border-color: rgb(36 94 169 / 80%);
+  background: #336db1;
+}
+
+.page :global(.arco-switch) {
+  background: rgb(130 143 161 / 40%);
+}
+
+.page :global(.arco-switch-checked) {
+  background: linear-gradient(180deg, #4f82c7, #2f68a8);
+}
+
+.page :global(.arco-empty-description) {
+  color: var(--rc-text-secondary);
+}
+
+.shell {
+  max-width: 1440px;
+  height: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+}
+
+.hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 24px 28px;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 24px;
+  background: radial-gradient(circle at top left, rgb(255 255 255 / 34%), transparent 38%), var(--rc-surface-hero);
+  box-shadow:
+    0 22px 54px rgb(4 11 24 / 24%),
+    inset 0 1px 0 rgb(255 255 255 / 48%);
+  flex-shrink: 0;
+}
+
+.heroText {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.heroTitle {
+  font-size: 30px;
+  font-weight: 800;
+  color: #111827;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  text-shadow: 0 1px 0 rgb(255 255 255 / 48%);
+}
+
+.heroDesc {
+  max-width: 860px;
+  color: #405068;
+  font-size: 14px;
+  line-height: 1.75;
+}
+
+.heroMeta {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.heroMetaCard {
+  min-width: 150px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid var(--rc-border-soft);
+  background: rgb(251 252 253 / 92%);
+  box-shadow:
+    0 10px 24px rgb(29 42 62 / 8%),
+    inset 0 1px 0 rgb(255 255 255 / 62%);
+}
+
+.heroMetaLabel {
+  font-size: 12px;
+  font-weight: 700;
+  color: #627086;
+  letter-spacing: 0.02em;
+}
+
+.heroMetaValue {
+  margin-top: 8px;
+  font-size: 22px;
+  font-weight: 800;
+  color: #142033;
+  line-height: 1.2;
+}
+
+.heroMetaValueSmall {
+  margin-top: 8px;
+  font-size: 14px;
+  font-weight: 800;
+  color: #142033;
+  line-height: 1.5;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(300px, 360px) minmax(480px, 1.2fr) minmax(340px, 420px);
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+  align-items: stretch;
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.leftColumn {
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.middleColumn,
+.rightColumn {
+  overflow: hidden;
+}
+
+.rightColumn {
+  gap: 14px;
+}
+
+.panel {
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 20px;
+  background: var(--rc-surface-panel);
+  box-shadow:
+    0 18px 42px rgb(6 12 24 / 22%),
+    inset 0 1px 0 rgb(255 255 255 / 46%);
+  min-height: 0;
+}
+
+.panel :global(.arco-card-body) {
+  background: linear-gradient(180deg, rgb(248 249 251 / 96%), rgb(237 240 245 / 95%)), transparent;
+  color: var(--rc-text-primary);
+}
+
+.editPanel,
+.observePanel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.editPanel :global(.arco-card-body),
+.observePanel :global(.arco-card-body) {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.runPanel {
+  flex-shrink: 0;
+}
+
+.panelTitle {
+  font-size: 17px;
+  font-weight: 800;
+  color: #162033;
+}
+
+.panelDesc {
+  margin-top: 6px;
+  color: #4f5f76;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.pathBox {
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--rc-border-soft);
+  background: var(--rc-input-bg);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.6;
+  color: #35445b;
+  word-break: break-all;
+}
+
+.inlinePicker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.roleWrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.roleHint {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #66758c;
+}
+
+.notice {
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--rc-warning-border);
+  background: var(--rc-warning-bg);
+  color: var(--rc-warning-text);
+  font-size: 13px;
+  line-height: 1.65;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 42%);
+}
+
+.queueList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 6px;
+}
+
+.queueCard {
+  border: 1px solid var(--rc-border-soft);
+  border-radius: 18px;
+  background: var(--rc-surface-card);
+  padding: 16px;
+  box-shadow: 0 14px 34px rgb(17 27 44 / 9%);
+}
+
+.queueHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.queueHeaderLeft {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  color: #223047;
+}
+
+.queueHeaderLeft :global(.arco-typography) {
+  color: #223047;
+}
+
+.queueMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.queueRow {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.queueEmpty {
+  padding: 40px 20px;
+  border: 1px dashed rgb(119 136 160 / 32%);
+  border-radius: 18px;
+  background: rgb(243 246 249 / 78%);
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.configGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.toggleGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.toggleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--rc-border-soft);
+  background: rgb(244 246 249 / 88%);
+}
+
+.toggleTitle {
+  font-size: 14px;
+  font-weight: 800;
+  color: #1c2840;
+}
+
+.runtimeSummary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.logPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 320px;
+  overflow: auto;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid rgb(94 117 151 / 24%);
+  background: linear-gradient(180deg, rgb(12 20 33 / 96%), rgb(19 30 47 / 94%));
+  color: var(--rc-text-inverse);
+}
+
+.logRow {
+  display: grid;
+  grid-template-columns: 72px 56px minmax(0, 1fr);
+  gap: 10px;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.logTime {
+  color: rgb(156 172 196);
+}
+
+.logKind {
+  font-weight: 700;
+  text-transform: uppercase;
+  color: rgb(137 205 255);
+}
+
+.logText {
+  color: rgb(227 235 248);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.logPlaceholder {
+  color: rgb(164 179 199);
+  font-size: 13px;
+}
+
+.turnRecordList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 6px;
+}
+
+.turnRecordCard {
+  border: 1px solid var(--rc-border-soft);
+  border-radius: 18px;
+  background: var(--rc-surface-card);
+  padding: 16px;
+  box-shadow: 0 14px 34px rgb(17 27 44 / 9%);
+}
+
+.turnRecordHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #223047;
+}
+
+.turnRecordHeader :global(.arco-typography) {
+  color: #223047;
+}
+
+.turnRecordBlock {
+  margin-top: 12px;
+}
+
+.turnRecordLabel {
+  font-size: 12px;
+  font-weight: 700;
+  color: #617086;
+  margin-bottom: 6px;
+}
+
+.turnRecordText {
+  margin: 0;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgb(115 131 153 / 18%);
+  background: rgb(243 246 249 / 94%);
+  color: #253348;
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.editPanelBody,
+.observePanelBody {
+  flex: 1;
+  min-height: 0;
+}
+
+.editPanelBody > :global(.arco-space-item:last-child),
+.observePanelBody > :global(.arco-space-item:last-child) {
+  flex: 1;
+  min-height: 0;
+}
+
+@media (max-width: 1024px) {
+  .page {
+    height: auto;
+    min-height: 100%;
+    overflow: visible;
+  }
+
+  .shell {
+    height: auto;
+  }
+
+  .grid {
+    grid-template-columns: 1fr;
+    flex: initial;
+  }
+
+  .hero {
+    flex-direction: column;
+  }
+
+  .leftColumn,
+  .middleColumn,
+  .rightColumn {
+    overflow: visible;
+  }
+
+  .editPanel,
+  .observePanel,
+  .runPanel {
+    flex: initial;
+  }
+
+  .queueList,
+  .turnRecordList {
+    overflow: visible;
+    max-height: none;
+    padding-right: 0;
+  }
+}
+
+@media (max-width: 768px) {
+  .page {
+    padding: 16px;
+  }
+
+  .hero {
+    padding: 18px;
+    border-radius: 18px;
+  }
+
+  .heroTitle {
+    font-size: 24px;
+  }
+
+  .queueRow {
+    grid-template-columns: 1fr;
+  }
+
+  .configGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .runtimeSummary {
+    grid-template-columns: 1fr;
+  }
+
+  .toggleRow {
+    align-items: flex-start;
+  }
+
+  .logRow {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .turnRecordHeader {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

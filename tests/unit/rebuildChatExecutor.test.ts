@@ -38,6 +38,7 @@ const createTurnResult = (output: string, overrides: Partial<RebuildChatExecuteT
       updated: ['file.md'],
       deleted: [],
     },
+    retryDirective: null,
     ...overrides,
   };
 };
@@ -68,6 +69,7 @@ describe('rebuildChatExecutor', () => {
       conversationId: 'conv-1',
       endReason: 'all_sent',
       nextTurnIndex: 2,
+      retryDirective: null,
       status: 'completed',
     });
     expect(prompts).toHaveLength(2);
@@ -99,6 +101,7 @@ describe('rebuildChatExecutor', () => {
       conversationId: 'conv-1',
       endReason: null,
       nextTurnIndex: 1,
+      retryDirective: null,
       status: 'paused',
     });
   });
@@ -128,6 +131,7 @@ describe('rebuildChatExecutor', () => {
       conversationId: 'conv-1',
       endReason: 'aborted',
       nextTurnIndex: 1,
+      retryDirective: null,
       status: 'completed',
     });
     expect(records).toEqual([{ status: 'aborted' }]);
@@ -158,7 +162,52 @@ describe('rebuildChatExecutor', () => {
       conversationId: 'conv-1',
       endReason: 'no_output',
       nextTurnIndex: 1,
+      retryDirective: null,
       status: 'completed',
     });
+  });
+
+  test('waits and retries current turn when quota directive is returned', async () => {
+    const { control } = createControl();
+    const records: Array<{ status: string }> = [];
+
+    const result = await executeRebuildChatRun({
+      queue: [{ role: 'user', text: 'first' }],
+      startIndex: 0,
+      initialConversationId: 'conv-1',
+      includeHistoryContext: false,
+      maxRounds: 1,
+      stopOnNoChanges: false,
+      control,
+      executeTurn: async () =>
+        createTurnResult('quota', {
+          exitCode: 1,
+          retryDirective: {
+            reason: 'quota',
+            retryAt: 1000,
+            retryDelayMs: 1000,
+            matchedText: 'Individual quota reached',
+            source: 'output',
+          },
+        }),
+      onTurnRecord: (record) => {
+        records.push({ status: record.status });
+      },
+    });
+
+    expect(result).toEqual({
+      conversationId: 'conv-1',
+      endReason: null,
+      nextTurnIndex: 0,
+      retryDirective: {
+        reason: 'quota',
+        retryAt: 1000,
+        retryDelayMs: 1000,
+        matchedText: 'Individual quota reached',
+        source: 'output',
+      },
+      status: 'waiting_retry',
+    });
+    expect(records).toEqual([]);
   });
 });

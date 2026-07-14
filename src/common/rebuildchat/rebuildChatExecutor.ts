@@ -1,6 +1,7 @@
 import { hasFileChanges, type FileChangeSummary } from './fileChangeTracker';
+import type { QuotaRetryDirective } from './quotaRetryParser';
 
-export type RunStatus = 'idle' | 'running' | 'paused' | 'stopping' | 'completed' | 'failed';
+export type RunStatus = 'idle' | 'running' | 'paused' | 'stopping' | 'waiting_retry' | 'completed' | 'failed';
 export type RunEndReason = 'all_sent' | 'max_rounds' | 'no_output' | 'aborted' | 'failed' | null;
 export type RunLogKind = 'system' | 'turn' | 'output';
 export type TurnStatus = 'completed' | 'failed' | 'aborted';
@@ -31,6 +32,7 @@ export interface RebuildChatExecuteTurnResult {
   exitCode: number | null;
   fileChanges: FileChangeSummary;
   output: string;
+  retryDirective: QuotaRetryDirective | null;
 }
 
 export interface RebuildChatExecuteTurnParams {
@@ -39,6 +41,25 @@ export interface RebuildChatExecuteTurnParams {
   queueItem: RebuildChatQueueEntry;
   turnIndex: number;
   turnNumber: number;
+}
+
+export interface RebuildChatTurnStartPayload {
+  conversationId: string | null;
+  prompt: string;
+  queueItem: RebuildChatQueueEntry;
+  turnIndex: number;
+  turnNumber: number;
+}
+
+export interface RebuildChatTurnCompletePayload {
+  conversationId: string | null;
+  prompt: string;
+  queueItem: RebuildChatQueueEntry;
+  result: RebuildChatExecuteTurnResult;
+  turnIndex: number;
+  turnNumber: number;
+  turnStatus: TurnStatus;
+  wasAborted: boolean;
 }
 
 export interface ExecuteRebuildChatRunOptions {
@@ -50,6 +71,9 @@ export interface ExecuteRebuildChatRunOptions {
   onConversationId?: (conversationId: string) => void;
   onCurrentTurnIndex?: (turnIndex: number) => void;
   onLog?: (kind: RunLogKind, text: string) => void;
+  onTurnAdvanced?: (turnIndex: number) => void;
+  onTurnComplete?: (payload: RebuildChatTurnCompletePayload) => void;
+  onTurnStart?: (payload: RebuildChatTurnStartPayload) => void;
   onTurnRecord?: (record: RebuildChatTurnRecord) => void;
   queue: RebuildChatQueueEntry[];
   startIndex?: number;
@@ -60,6 +84,7 @@ export interface ExecuteRebuildChatRunResult {
   conversationId: string | null;
   endReason: RunEndReason;
   nextTurnIndex: number;
+  retryDirective: QuotaRetryDirective | null;
   status: Exclude<RunStatus, 'idle' | 'running' | 'stopping'>;
 }
 
@@ -97,6 +122,7 @@ export const executeRebuildChatRun = async (options: ExecuteRebuildChatRunOption
           conversationId,
           endReason: 'max_rounds',
           nextTurnIndex: index,
+          retryDirective: null,
           status: 'completed',
         };
       }
@@ -107,6 +133,7 @@ export const executeRebuildChatRun = async (options: ExecuteRebuildChatRunOption
           conversationId,
           endReason: 'aborted',
           nextTurnIndex: index,
+          retryDirective: null,
           status: 'completed',
         };
       }
@@ -115,6 +142,13 @@ export const executeRebuildChatRun = async (options: ExecuteRebuildChatRunOption
       const prompt = buildPromptForTurn(options.queue, index, options.includeHistoryContext);
       const turnNumber = index + 1;
 
+      options.onTurnStart?.({
+        conversationId,
+        prompt,
+        queueItem: item,
+        turnIndex: index,
+        turnNumber,
+      });
       options.onCurrentTurnIndex?.(index);
       options.onLog?.('turn', `第 ${turnNumber} 轮开始，role=${item.role}`);
 
@@ -132,7 +166,59 @@ export const executeRebuildChatRun = async (options: ExecuteRebuildChatRunOption
       }
 
       const wasAborted = options.control.isAbortRequested();
-      const turnStatus: TurnStatus = wasAborted ? 'aborted' : result.exitCode === 0 ? 'completed' : 'failed';
+      if (wasAborted) {
+        options.onTurnComplete?.({
+          conversationId,
+          prompt,
+          queueItem: item,
+          result,
+          turnIndex: index,
+          turnNumber,
+          turnStatus: 'aborted',
+          wasAborted: true,
+        });
+        options.onTurnRecord?.({
+          turnNumber,
+          role: item.role,
+          prompt,
+          output: result.output,
+          status: 'aborted',
+          conversationId,
+          fileChanges: result.fileChanges,
+        });
+        options.onLog?.('output', `第 ${turnNumber} 轮输出：${result.output || '(空输出)'}`);
+        return {
+          conversationId,
+          endReason: 'aborted',
+          nextTurnIndex: turnNumber,
+          retryDirective: null,
+          status: 'completed',
+        };
+      }
+
+      if (result.retryDirective?.reason === 'quota') {
+        options.onLog?.('output', `第 ${turnNumber} 轮输出：${result.output || '(空输出)'}`);
+        options.onLog?.('system', `第 ${turnNumber} 轮触发额度限制，等待后会重试当前轮。`);
+        return {
+          conversationId,
+          endReason: null,
+          nextTurnIndex: index,
+          retryDirective: result.retryDirective,
+          status: 'waiting_retry',
+        };
+      }
+
+      const turnStatus: TurnStatus = result.exitCode === 0 ? 'completed' : 'failed';
+      options.onTurnComplete?.({
+        conversationId,
+        prompt,
+        queueItem: item,
+        result,
+        turnIndex: index,
+        turnNumber,
+        turnStatus,
+        wasAborted,
+      });
 
       options.onTurnRecord?.({
         turnNumber,
@@ -152,6 +238,7 @@ export const executeRebuildChatRun = async (options: ExecuteRebuildChatRunOption
           conversationId,
           endReason: 'aborted',
           nextTurnIndex: turnNumber,
+          retryDirective: null,
           status: 'completed',
         };
       }
@@ -162,6 +249,7 @@ export const executeRebuildChatRun = async (options: ExecuteRebuildChatRunOption
           conversationId,
           endReason: 'failed',
           nextTurnIndex: turnNumber,
+          retryDirective: null,
           status: 'failed',
         };
       }
@@ -172,12 +260,14 @@ export const executeRebuildChatRun = async (options: ExecuteRebuildChatRunOption
           conversationId,
           endReason: 'no_output',
           nextTurnIndex: turnNumber,
+          retryDirective: null,
           status: 'completed',
         };
       }
 
       const nextIndex = turnNumber;
       options.onCurrentTurnIndex?.(nextIndex);
+      options.onTurnAdvanced?.(nextIndex);
       const shouldPause = options.control.consumePauseRequest ? options.control.consumePauseRequest() : options.control.isPauseRequested();
       if (shouldPause) {
         options.onLog?.('system', `已在第 ${turnNumber} 轮后暂停。`);
@@ -185,6 +275,7 @@ export const executeRebuildChatRun = async (options: ExecuteRebuildChatRunOption
           conversationId,
           endReason: null,
           nextTurnIndex: nextIndex,
+          retryDirective: null,
           status: 'paused',
         };
       }
@@ -195,6 +286,7 @@ export const executeRebuildChatRun = async (options: ExecuteRebuildChatRunOption
       conversationId,
       endReason: 'all_sent',
       nextTurnIndex: options.queue.length,
+      retryDirective: null,
       status: 'completed',
     };
   } catch (error) {
@@ -204,6 +296,7 @@ export const executeRebuildChatRun = async (options: ExecuteRebuildChatRunOption
       conversationId,
       endReason: 'failed',
       nextTurnIndex: activeTurnIndex,
+      retryDirective: null,
       status: 'failed',
     };
   }

@@ -13,7 +13,7 @@ const __dirname = path.dirname(__filename);
 const workspaceRoot = path.resolve(__dirname, '..');
 const rendererRoot = path.join(workspaceRoot, '.webpack', 'renderer');
 const mainEntry = path.join(workspaceRoot, '.webpack', 'main', 'index.js');
-const port = 3100;
+const port = Number(process.env.REBUILDCHAT_SMOKE_PORT || '3100');
 
 const samplePromptFile = JSON.stringify({
   chunkedPrompt: {
@@ -111,11 +111,72 @@ const waitForPageState = async (page, predicate, timeoutMs, label) => {
     await wait(100);
   }
 
+  console.error(`[smoke] wait timeout for ${label}: ${JSON.stringify(lastState)}`);
+  try {
+    const runLogText = await page.getByTestId('run-log-panel').innerText();
+    console.error(`[smoke] run log panel for ${label}:\n${runLogText}`);
+  } catch {}
   throw new Error(`Timed out waiting for ${label}. Last state: ${JSON.stringify(lastState)}`);
 };
 
 const installFakeRuntime = async (page, mode) => {
   await page.evaluate((currentMode) => {
+    if (currentMode === 'quota-wait-flow') {
+      window.__REBUILDCHAT_RUNTIME_OVERRIDE__ = {
+        snapshotDirectory: async () => ({
+          stub: { path: 'stub', size: 1, lastModified: Date.now() },
+        }),
+        compareDirectorySnapshots: (() => {
+          let compareIndex = 0;
+          const changes = [
+            { created: [], updated: [], deleted: [] },
+            { created: ['summary.md'], updated: [], deleted: [] },
+            { created: ['summary.md'], updated: [], deleted: [] },
+          ];
+
+          return () => {
+            const next = changes[Math.min(compareIndex, changes.length - 1)];
+            compareIndex += 1;
+            return next;
+          };
+        })(),
+        startAgyPrintTurn: (() => {
+          let callIndex = 0;
+
+          return async () => {
+            const current = callIndex++;
+            return {
+              id: `quota-${current + 1}`,
+              promise: new Promise((resolve) => {
+                setTimeout(() => {
+                  if (current === 0) {
+                    resolve({
+                      output: 'Error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 0s.',
+                      conversationId: 'conv-quota-1',
+                      exitCode: 1,
+                      logFilePath: 'stub.log',
+                      rawLog: 'Error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 0s.',
+                    });
+                    return;
+                  }
+
+                  resolve({
+                    output: `TURN_OK_${current + 1}`,
+                    conversationId: 'conv-quota-1',
+                    exitCode: 0,
+                    logFilePath: 'stub.log',
+                    rawLog: 'stub',
+                  });
+                }, 300);
+              }),
+              abort: async () => {},
+            };
+          };
+        })(),
+      };
+      return;
+    }
+
     if (currentMode === 'resume-flow') {
       window.__REBUILDCHAT_RUNTIME_OVERRIDE__ = {
         snapshotDirectory: async () => ({
@@ -224,32 +285,60 @@ const installFakeRuntime = async (page, mode) => {
   }, mode);
 };
 
-const seedPage = async (page) => {
-  await page.evaluate((rawContent) => {
+const seedPage = async (page, options = {}) => {
+  const existingDir = workspaceRoot.replace(/\\/g, '/');
+  await page.evaluate(({ rawContent, existingDir: nextDir }) => {
     window.__REBUILDCHAT_FILE_PICKER_OVERRIDE__ = {
       filePath: 'D:/fixtures/sample.json',
       rawContent,
-      workDir: 'D:/fixtures/workdir',
-      watchDir: 'D:/fixtures/workdir',
+      workDir: nextDir,
+      watchDir: nextDir,
     };
-  }, samplePromptFile);
+  }, { rawContent: samplePromptFile, existingDir });
 
   await page.getByTestId('pick-json-file').click();
-  await page.evaluate(() => {
+  await page.evaluate(({ nextDir, runOptions }) => {
     window.__REBUILDCHAT_TEST_API__?.setRunConfig({
-      maxRoundsInput: '3',
-      stopOnNoChanges: true,
-      watchDir: 'D:/fixtures/workdir',
-      workDir: 'D:/fixtures/workdir',
+      maxRoundsInput: runOptions.maxRoundsInput ?? '3',
+      stopOnNoChanges: runOptions.stopOnNoChanges ?? true,
+      watchDir: nextDir,
+      workDir: nextDir,
     });
-  });
+  }, { nextDir: existingDir, runOptions: options });
 
   await waitForPageState(
     page,
-    (state) => state.queueLength === 3 && state.workDir === 'D:/fixtures/workdir' && state.watchDir === 'D:/fixtures/workdir',
+    (state) =>
+      state.queueLength === 3 &&
+      state.workDir === existingDir &&
+      state.watchDir === existingDir &&
+      state.effectiveMaxRounds === Number(options.maxRoundsInput ?? '3'),
     15000,
     'seeded prompt file and directories'
   );
+};
+
+const launchMainWindow = async () => {
+  const app = await electron.launch({
+    executablePath: electronBinary,
+    args: [mainEntry],
+  });
+
+  let page = null;
+  const startedAt = Date.now();
+  while (!page && Date.now() - startedAt < 15000) {
+    await wait(500);
+    page = getMainWindow(app) ?? null;
+  }
+
+  if (!page) {
+    await app.close().catch(() => {});
+    throw new Error('Failed to find the main RebuildChat window.');
+  }
+
+  await page.goto(`http://localhost:${port}/main_window/index.html#/rebuildchat`);
+  await page.waitForFunction(() => Boolean(window.__REBUILDCHAT_TEST_API__), null, { timeout: 15000 });
+  return { app, page };
 };
 
 const assertText = async (locator, expected, label) => {
@@ -268,27 +357,39 @@ const main = async () => {
   let app;
 
   try {
-    app = await electron.launch({
-      executablePath: electronBinary,
-      args: [mainEntry],
-    });
-
-    await wait(4000);
-    const page = getMainWindow(app);
+    ({ app } = await launchMainWindow());
+    let page = getMainWindow(app);
     if (!page) {
       throw new Error('Failed to find the main RebuildChat window.');
     }
 
-    await page.goto(`http://localhost:${port}/main_window/index.html#/rebuildchat`);
-    await page.waitForFunction(() => Boolean(window.__REBUILDCHAT_TEST_API__), null, { timeout: 15000 });
+    await page.evaluate(() => window.__REBUILDCHAT_TEST_API__?.clearPersistedTasks());
+    await installFakeRuntime(page, 'quota-wait-flow');
+    await seedPage(page, { maxRoundsInput: '1', stopOnNoChanges: false });
+    console.log('[smoke] quota scenario seeded');
+
+    await page.getByTestId('run-start').click();
+    await waitForPageState(page, (state) => state.runStatus === 'waiting_retry' && state.retryAttemptCount === 1, 15000, 'quota waiting state');
+    console.log('[smoke] quota waiting reached');
+    await waitForPageState(
+      page,
+      (state) => state.runStatus === 'completed' && state.runEndReason === 'max_rounds' && state.turnRecordCount === 1,
+      25000,
+      'quota auto retry completion'
+    );
+    console.log('[smoke] quota scenario completed');
+
+    await assertText(page.getByTestId('run-end-reason-value'), '达到最大轮数', 'quota retry end reason');
+    await page.evaluate(() => window.__REBUILDCHAT_TEST_API__?.clearPersistedTasks());
 
     await installFakeRuntime(page, 'resume-flow');
     await seedPage(page);
+    console.log('[smoke] resume scenario seeded');
 
     await page.getByTestId('run-start').click();
     await waitForPageState(page, (state) => state.runStatus === 'running', 15000, 'running state after start');
     await page.getByTestId('run-pause').click();
-    await waitForPageState(page, (state) => state.runStatus === 'paused', 10000, 'paused state after pause');
+    await waitForPageState(page, (state) => state.runStatus === 'paused' && state.currentTurnIndex === 1, 10000, 'paused state after pause');
 
     await assertText(page.getByTestId('run-status-value'), 'paused', 'pause status');
 
@@ -302,15 +403,35 @@ const main = async () => {
       throw new Error(`Expected 1 turn record after pause, got ${pausedTurnCount}`);
     }
 
-    await page.getByTestId('run-resume').click();
+    const pausedTaskCount = await page.getByTestId('task-card').count();
+    if (pausedTaskCount !== 1) {
+      throw new Error(`Expected 1 persisted task after pause, got ${pausedTaskCount}`);
+    }
+
+    await waitForPageState(page, (state) => state.persistedCurrentTurnIndex === 1, 10000, 'persisted paused turn index');
+    await page.evaluate(() => window.__REBUILDCHAT_TEST_API__?.flushPersistedTasks());
+    await wait(500);
+    console.log('[smoke] first session persisted');
+
+    await app.close().catch(() => {});
+
+    ({ app, page } = await launchMainWindow());
+    await installFakeRuntime(page, 'resume-flow');
+    console.log('[smoke] second session launched');
+
+    await waitForPageState(page, (state) => state.persistedTaskCount === 1 && state.persistedCurrentTurnIndex === 1, 15000, 'persisted task after relaunch');
+    console.log('[smoke] relaunch task visible');
+    await page.getByTestId('task-resume-button').first().click();
+    console.log('[smoke] relaunch resume triggered');
     await waitForPageState(
       page,
-      (state) => state.runStatus === 'completed' && state.runEndReason === 'no_output',
+      (state) => state.runStatus === 'completed' && state.runEndReason === 'all_sent',
       15000,
-      'completed no_output state after resume'
+      'completed all_sent state after relaunch resume'
     );
+    console.log('[smoke] relaunch resume completed');
 
-    await assertText(page.getByTestId('run-end-reason-value'), '本轮无文件产出', 'resume end reason');
+    await assertText(page.getByTestId('run-end-reason-value'), '所有条目已发送完成', 'resume end reason');
 
     const completedTurnCount = await page.getByTestId('turn-record-card').count();
     if (completedTurnCount !== 3) {
@@ -322,16 +443,21 @@ const main = async () => {
       throw new Error('Expected run logs to be visible after resume flow.');
     }
 
+    await page.getByTestId('task-delete-button').first().click();
+    await waitForPageState(page, (state) => state.persistedTaskCount === 0, 15000, 'task deletion');
+
     await installFakeRuntime(page, 'abort-flow');
     await page.getByTestId('run-start').click();
     await waitForPageState(page, (state) => state.runStatus === 'running', 15000, 'running state before abort');
     await page.getByTestId('run-abort').click();
+    console.log('[smoke] abort scenario started');
     await waitForPageState(
       page,
       (state) => state.runStatus === 'completed' && state.runEndReason === 'aborted',
       15000,
       'completed aborted state after abort'
     );
+    console.log('[smoke] abort scenario completed');
 
     await assertText(page.getByTestId('run-end-reason-value'), '人工中止', 'abort end reason');
 

@@ -1,26 +1,26 @@
 import { ipcBridge } from '@/common';
-import { executeRebuildChatRun, summarizeFileChanges, type RebuildChatTurnRecord, type RunEndReason, type RunLogKind, type RunStatus } from '@/common/rebuildchat/rebuildChatExecutor';
 import { appendCustomPromptQueueItem, createEditablePromptQueue, removeEditablePromptQueueItems, updateEditablePromptQueueItem, type EditablePromptQueueItem } from '@/common/rebuildchat/editablePromptQueue';
+import { canResumeRebuildChatTask, getPersistedTaskStatus, getRebuildChatTaskResumeIndex, sortRebuildChatTasks, type RebuildChatActiveTurnState, type RebuildChatPersistedLogEntry, type RebuildChatPersistedRetryState, type RebuildChatPersistedTask, type RebuildChatPersistedTaskStatus, type RebuildChatPersistedTurnRecord } from '@/common/rebuildchat/persistedTask';
 import { parsePromptFile, type ParsePromptFileResult } from '@/common/rebuildchat/promptFileParser';
+import { executeRebuildChatRun, summarizeFileChanges, type RunEndReason, type RunLogKind, type RunStatus } from '@/common/rebuildchat/rebuildChatExecutor';
+import { parseQuotaRetry } from '@/common/rebuildchat/quotaRetryParser';
 import { parseError, uuid } from '@/common/utils';
 import { Button, Card, Checkbox, Empty, Input, Message, Space, Switch, Tag, Typography } from '@arco-design/web-react';
 import { CloseOne, Delete, Pause, Play, Plus, Refresh, Right, UploadOne } from '@icon-park/react';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { getRebuildChatRuntimeDriver } from './runtime';
 import styles from './index.module.css';
+import { loadRebuildChatTasks, saveRebuildChatTasks } from './taskStorage';
 
 const { Paragraph, Text } = Typography;
 
-interface RunLogEntry {
-  id: string;
-  kind: RunLogKind;
-  text: string;
-  timestamp: string;
-}
-
-interface TurnRecord extends RebuildChatTurnRecord {
-  id: string;
-}
+type RunLogEntry = RebuildChatPersistedLogEntry;
+type RetryState = RebuildChatPersistedRetryState;
+type TurnRecord = RebuildChatPersistedTurnRecord;
+type RebuildChatTaskOverrides = Omit<Partial<RebuildChatPersistedTask>, 'progress' | 'source'> & {
+  progress?: Partial<RebuildChatPersistedTask['progress']>;
+  source?: Partial<RebuildChatPersistedTask['source']>;
+};
 
 interface RebuildChatSeedPromptFilePayload {
   filePath: string;
@@ -47,17 +47,27 @@ interface RebuildChatFilePickerOverride {
 }
 
 interface RebuildChatTestApi {
+  clearPersistedTasks: () => Promise<void>;
+  flushPersistedTasks: () => Promise<void>;
   getState: () => {
     conversationId: string | null;
     currentTurnIndex: number;
+    currentTaskId: string | null;
+    effectiveMaxRounds: number;
+    persistedCurrentTurnIndex: number | null;
+    persistedTaskCount: number;
     queueLength: number;
+    retryAttemptCount: number | null;
+    retryAt: number | null;
     runEndReason: RunEndReason;
     runLogCount: number;
     runStatus: RunStatus;
+    taskNotice: string;
     turnRecordCount: number;
     watchDir: string;
     workDir: string;
   };
+  resumePersistedTask: (index: number) => Promise<void>;
   seedPromptFile: (payload: RebuildChatSeedPromptFilePayload) => void;
   setRunConfig: (payload: RebuildChatRunConfigPayload) => void;
 }
@@ -86,6 +96,100 @@ const getEndReasonLabel = (reason: RunEndReason): string => {
   }
 };
 
+const getTaskStatusLabel = (status: RebuildChatPersistedTaskStatus): string => {
+  switch (status) {
+    case 'running':
+      return '运行中';
+    case 'paused':
+      return '已暂停';
+    case 'stopping':
+      return '停止中';
+    case 'waiting_retry':
+      return '等待重试';
+    case 'completed':
+      return '已完成';
+    case 'failed':
+      return '失败';
+    case 'aborted':
+      return '已中止';
+    default:
+      return '草稿';
+  }
+};
+
+const getTaskTitle = (task: RebuildChatPersistedTask): string => {
+  const normalizedPath = task.source.filePath.replace(/\\/g, '/');
+  const segments = normalizedPath.split('/').filter(Boolean);
+  return segments[segments.length - 1] || `任务 ${task.taskId.slice(0, 8)}`;
+};
+
+const getTaskProgressLabel = (task: RebuildChatPersistedTask): string => {
+  const nextTurn = Math.min(getRebuildChatTaskResumeIndex(task) + 1, Math.max(task.queueSnapshot.length, 1));
+  const totalTurns = Math.max(task.progress.effectiveMaxRounds || task.queueSnapshot.length, 0);
+  return `第 ${nextTurn} / ${totalTurns}`;
+};
+
+const normalizeLoadedRunStatus = (task: RebuildChatPersistedTask): RunStatus => {
+  if (task.status === 'running' || task.status === 'stopping') {
+    return 'paused';
+  }
+
+  if (task.status === 'aborted') {
+    return 'completed';
+  }
+
+  if (task.status === 'idle' || task.status === 'paused' || task.status === 'waiting_retry' || task.status === 'completed' || task.status === 'failed') {
+    return task.status;
+  }
+
+  return 'idle';
+};
+
+const createRunLogEntry = (kind: RunLogKind, text: string): RunLogEntry => ({
+  id: `log-${uuid(12)}`,
+  kind,
+  text,
+  timestamp: new Date().toLocaleTimeString(),
+});
+
+const computeEffectiveMaxRounds = (maxRoundsValue: string, queueLength: number) => {
+  const parsed = Number(maxRoundsValue);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return queueLength;
+  }
+  return Math.min(queueLength, Math.floor(parsed));
+};
+
+const formatRetryDelay = (delayMs: number): string => {
+  const totalSeconds = Math.max(Math.ceil(delayMs / 1000), 0);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const parts: string[] = [];
+
+  if (hours) parts.push(`${hours}小时`);
+  if (minutes) parts.push(`${minutes}分钟`);
+  if (seconds || !parts.length) parts.push(`${seconds}秒`);
+
+  return parts.join('');
+};
+
+const formatRetryClock = (retryAt: number | null): string => {
+  if (retryAt === null) {
+    return '待定';
+  }
+
+  return new Date(retryAt).toLocaleTimeString();
+};
+
+const formatRetryRemaining = (retryAt: number | null, now: number): string => {
+  if (retryAt === null) {
+    return '按固定间隔等待';
+  }
+
+  return formatRetryDelay(Math.max(retryAt - now, 0));
+};
+
 const RebuildChatPage: React.FC = () => {
   const [filePath, setFilePath] = useState('');
   const [rawContent, setRawContent] = useState('');
@@ -111,15 +215,249 @@ const RebuildChatPage: React.FC = () => {
   const [turnRecords, setTurnRecords] = useState<TurnRecord[]>([]);
   const [currentTurnIndex, setCurrentTurnIndex] = useState(0);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [activeTurnState, setActiveTurnState] = useState<RebuildChatActiveTurnState>('idle');
+  const [retryState, setRetryState] = useState<RetryState | null>(null);
+  const [retryClockNow, setRetryClockNow] = useState(() => Date.now());
+  const [persistedTasks, setPersistedTasks] = useState<RebuildChatPersistedTask[]>([]);
+  const [tasksLoaded, setTasksLoaded] = useState(false);
+  const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
+  const [taskNotice, setTaskNotice] = useState('');
 
   const queueRef = useRef(queue);
   const currentExecutionRef = useRef<Awaited<ReturnType<ReturnType<typeof getRebuildChatRuntimeDriver>['startAgyPrintTurn']>> | null>(null);
   const pauseRequestedRef = useRef(false);
   const abortRequestedRef = useRef(false);
+  const queueRebuildSuppressedRef = useRef(0);
+  const applyingTaskRef = useRef(false);
+  const persistedTasksRef = useRef<RebuildChatPersistedTask[]>([]);
+  const currentTaskIdRef = useRef<string | null>(null);
+  const retryTimeoutRef = useRef<number | null>(null);
+  const retryAutoResumeRef = useRef(false);
+  const saveTasksPromiseRef = useRef(Promise.resolve());
+  const pageStateRef = useRef({
+    filePath: '',
+    rawContent: '',
+    excludeThought: true,
+    selectedRoles: [] as string[],
+    queue: [] as EditablePromptQueueItem[],
+    workDir: '',
+    watchDir: '',
+    watchExtensionsInput: '',
+    maxRoundsInput: '',
+    includeHistoryContext: false,
+    stopOnNoChanges: true,
+    skipPermissions: false,
+    runStatus: 'idle' as RunStatus,
+    runEndReason: null as RunEndReason,
+    runLogs: [] as RunLogEntry[],
+    turnRecords: [] as TurnRecord[],
+    currentTurnIndex: 0,
+    conversationId: null as string | null,
+    activeTurnState: 'idle' as RebuildChatActiveTurnState,
+    retryState: null as RetryState | null,
+  });
+
+  const commitPersistedTasks = (tasks: RebuildChatPersistedTask[]) => {
+    const nextTasks = sortRebuildChatTasks(tasks);
+    persistedTasksRef.current = nextTasks;
+    setPersistedTasks(nextTasks);
+    saveTasksPromiseRef.current = saveTasksPromiseRef.current
+      .then(() => saveRebuildChatTasks(nextTasks))
+      .catch((error) => {
+        console.error('[RebuildChat] Failed to save tasks:', error);
+      });
+    return nextTasks;
+  };
+
+  const buildPersistedTask = (taskId: string, createdAt: number, overrides: RebuildChatTaskOverrides = {}): RebuildChatPersistedTask => {
+    const state = pageStateRef.current;
+    const baseTask: RebuildChatPersistedTask = {
+      taskId,
+      createdAt,
+      updatedAt: Date.now(),
+      status: getPersistedTaskStatus(state.runStatus, state.runEndReason),
+      source: {
+        filePath: state.filePath,
+        rawContent: state.rawContent,
+        excludeThought: state.excludeThought,
+        selectedRoles: [...state.selectedRoles],
+      },
+      queueSnapshot: state.queue.map((item) => ({ ...item })),
+      workDir: state.workDir,
+      watchDir: state.watchDir,
+      watchExtensionsInput: state.watchExtensionsInput,
+      includeHistoryContext: state.includeHistoryContext,
+      maxRoundsInput: state.maxRoundsInput,
+      stopOnNoChanges: state.stopOnNoChanges,
+      skipPermissions: state.skipPermissions,
+      progress: {
+        conversationId: state.conversationId,
+        currentTurnIndex: state.currentTurnIndex,
+        effectiveMaxRounds: computeEffectiveMaxRounds(state.maxRoundsInput, state.queue.length),
+        runEndReason: state.runEndReason,
+        runLogs: state.runLogs.map((entry) => ({ ...entry })),
+        turnRecords: state.turnRecords.map((record) => ({ ...record })),
+        activeTurnState: state.activeTurnState,
+        retryState: state.retryState ? { ...state.retryState } : null,
+      },
+    };
+
+    return {
+      ...baseTask,
+      ...overrides,
+      source: {
+        ...baseTask.source,
+        ...(overrides.source || {}),
+      },
+      progress: {
+        ...baseTask.progress,
+        ...(overrides.progress || {}),
+      },
+    };
+  };
+
+  const hasTaskPayload = () => {
+    const state = pageStateRef.current;
+    return Boolean(state.filePath || state.rawContent || state.queue.length || state.runLogs.length || state.turnRecords.length);
+  };
+
+  const ensureCurrentTask = () => {
+    if (currentTaskIdRef.current) {
+      return currentTaskIdRef.current;
+    }
+
+    if (!hasTaskPayload()) {
+      return null;
+    }
+
+    const taskId = uuid();
+    const task = buildPersistedTask(taskId, Date.now());
+    commitPersistedTasks([task, ...persistedTasksRef.current.filter((item) => item.taskId !== taskId)]);
+    currentTaskIdRef.current = taskId;
+    setCurrentTaskId(taskId);
+    return taskId;
+  };
+
+  const persistCurrentTask = (overrides: RebuildChatTaskOverrides = {}) => {
+    const taskId = ensureCurrentTask();
+    if (!taskId) {
+      return null;
+    }
+
+    const existing = persistedTasksRef.current.find((task) => task.taskId === taskId);
+    const createdAt = existing?.createdAt ?? Date.now();
+    const nextTask = buildPersistedTask(taskId, createdAt, overrides);
+    commitPersistedTasks([nextTask, ...persistedTasksRef.current.filter((task) => task.taskId !== taskId)]);
+    return nextTask;
+  };
+
+  const clearPersistedTasks = async () => {
+    currentTaskIdRef.current = null;
+    setCurrentTaskId(null);
+    commitPersistedTasks([]);
+    await saveTasksPromiseRef.current;
+  };
+
+  const flushPersistedTasks = async () => {
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    if (tasksLoaded && !applyingTaskRef.current) {
+      const taskId = currentTaskIdRef.current ?? ensureCurrentTask();
+      if (taskId) {
+        const createdAt = persistedTasksRef.current.find((task) => task.taskId === taskId)?.createdAt ?? Date.now();
+        commitPersistedTasks([
+          {
+            taskId,
+            createdAt,
+            updatedAt: Date.now(),
+            status: getPersistedTaskStatus(runStatus, runEndReason),
+            source: {
+              filePath,
+              rawContent,
+              excludeThought,
+              selectedRoles: [...selectedRoles],
+            },
+            queueSnapshot: queue.map((item) => ({ ...item })),
+            workDir,
+            watchDir,
+            watchExtensionsInput,
+            includeHistoryContext,
+            maxRoundsInput,
+            stopOnNoChanges,
+            skipPermissions,
+            progress: {
+              conversationId,
+              currentTurnIndex,
+              effectiveMaxRounds,
+              runEndReason,
+              runLogs: runLogs.map((entry) => ({ ...entry })),
+              turnRecords: turnRecords.map((record) => ({ ...record })),
+              activeTurnState,
+              retryState: retryState ? { ...retryState } : null,
+            },
+          },
+          ...persistedTasksRef.current.filter((task) => task.taskId !== taskId),
+        ]);
+      }
+    }
+    await saveTasksPromiseRef.current;
+  };
+
+  const getPersistedCurrentTurnIndex = () => {
+    if (currentTaskIdRef.current) {
+      return persistedTasksRef.current.find((task) => task.taskId === currentTaskIdRef.current)?.progress.currentTurnIndex ?? null;
+    }
+
+    return persistedTasksRef.current[0]?.progress.currentTurnIndex ?? null;
+  };
 
   useEffect(() => {
     queueRef.current = queue;
   }, [queue]);
+
+  useEffect(() => {
+    currentTaskIdRef.current = currentTaskId;
+  }, [currentTaskId]);
+
+  useEffect(() => {
+    persistedTasksRef.current = persistedTasks;
+  }, [persistedTasks]);
+
+  useEffect(() => {
+    pageStateRef.current = {
+      filePath,
+      rawContent,
+      excludeThought,
+      selectedRoles,
+      queue,
+      workDir,
+      watchDir,
+      watchExtensionsInput,
+      maxRoundsInput,
+      includeHistoryContext,
+      stopOnNoChanges,
+      skipPermissions,
+      runStatus,
+      runEndReason,
+      runLogs,
+      turnRecords,
+      currentTurnIndex,
+      conversationId,
+      activeTurnState,
+      retryState,
+    };
+    // eslint-disable-next-line max-len
+  }, [activeTurnState, conversationId, currentTurnIndex, excludeThought, filePath, includeHistoryContext, maxRoundsInput, queue, rawContent, retryState, runEndReason, runLogs, runStatus, selectedRoles, skipPermissions, stopOnNoChanges, turnRecords, watchDir, watchExtensionsInput, workDir]);
+
+  useEffect(() => {
+    void loadRebuildChatTasks()
+      .then((tasks) => {
+        persistedTasksRef.current = tasks;
+        setPersistedTasks(tasks);
+      })
+      .finally(() => {
+        setTasksLoaded(true);
+      });
+  }, []);
 
   useEffect(() => {
     if (!rawContent) {
@@ -150,9 +488,15 @@ const RebuildChatPage: React.FC = () => {
   }, [parseResult, selectedRoles]);
 
   useEffect(() => {
+    if (queueRebuildSuppressedRef.current > 0) {
+      queueRebuildSuppressedRef.current -= 1;
+      return;
+    }
+
     setQueue(createEditablePromptQueue(filteredChunks));
     setSelectedQueueIds([]);
     setCurrentTurnIndex(0);
+    setActiveTurnState('idle');
   }, [filteredChunks]);
 
   const queueStats = useMemo(() => {
@@ -167,27 +511,48 @@ const RebuildChatPage: React.FC = () => {
   }, [queue]);
 
   const effectiveMaxRounds = useMemo(() => {
-    const parsed = Number(maxRoundsInput);
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      return queue.length;
-    }
-    return Math.min(queue.length, Math.floor(parsed));
+    return computeEffectiveMaxRounds(maxRoundsInput, queue.length);
   }, [maxRoundsInput, queue.length]);
 
+  const isRunLocked = runStatus === 'running' || runStatus === 'stopping' || runStatus === 'waiting_retry';
+
   const appendRunLog = (kind: RunLogKind, text: string) => {
-    setRunLogs((previous) => [
-      ...previous,
-      {
-        id: `log-${uuid(12)}`,
-        kind,
-        text,
-        timestamp: new Date().toLocaleTimeString(),
-      },
-    ]);
+    setRunLogs((previous) => [...previous, createRunLogEntry(kind, text)]);
   };
 
-  const applyPromptFileSelection = (nextPath: string, nextContent: string, nextWorkDir?: string, nextWatchDir?: string) => {
+  const clearRetryTimeout = () => {
+    if (retryTimeoutRef.current !== null) {
+      window.clearTimeout(retryTimeoutRef.current);
+      retryTimeoutRef.current = null;
+    }
+  };
+
+  const resetRunState = () => {
+    pauseRequestedRef.current = false;
+    abortRequestedRef.current = false;
+    retryAutoResumeRef.current = false;
+    clearRetryTimeout();
+    currentExecutionRef.current = null;
+    setRunStatus('idle');
+    setRunEndReason(null);
+    setRunLogs([]);
+    setTurnRecords([]);
+    setCurrentTurnIndex(0);
+    setConversationId(null);
+    setActiveTurnState('idle');
+    setRetryState(null);
+    setSelectedQueueIds([]);
+    setTaskNotice('');
+  };
+
+  const applyPromptFileSelection = (nextPath: string, nextContent: string, nextWorkDir?: string, nextWatchDir?: string, resetTaskContext: boolean = true) => {
     const nextParentDir = getRebuildChatRuntimeDriver().getParentDirectory(nextPath);
+
+    if (resetTaskContext) {
+      currentTaskIdRef.current = null;
+      setCurrentTaskId(null);
+      resetRunState();
+    }
 
     setFilePath(nextPath);
     setRawContent(nextContent);
@@ -198,7 +563,7 @@ const RebuildChatPage: React.FC = () => {
 
   const seedPromptFileForTestApi = (payload: RebuildChatSeedPromptFilePayload) => {
     const { filePath: nextPath, rawContent: nextContent, workDir: nextWorkDir, watchDir: nextWatchDir } = payload;
-    applyPromptFileSelection(nextPath, nextContent, nextWorkDir, nextWatchDir);
+    applyPromptFileSelection(nextPath, nextContent, nextWorkDir, nextWatchDir, true);
   };
 
   const setRunConfigForTestApi = (payload: RebuildChatRunConfigPayload) => {
@@ -222,25 +587,84 @@ const RebuildChatPage: React.FC = () => {
   const finishRun = (status: RunStatus, reason: RunEndReason, nextTurnIndex?: number) => {
     pauseRequestedRef.current = false;
     abortRequestedRef.current = false;
+    retryAutoResumeRef.current = false;
+    clearRetryTimeout();
     currentExecutionRef.current = null;
     setRunStatus(status);
     setRunEndReason(reason);
+    setActiveTurnState('idle');
+    setRetryState(null);
     if (typeof nextTurnIndex === 'number') {
       setCurrentTurnIndex(nextTurnIndex);
     }
+    persistCurrentTask({
+      status: getPersistedTaskStatus(status, reason),
+      progress: {
+        currentTurnIndex: typeof nextTurnIndex === 'number' ? nextTurnIndex : pageStateRef.current.currentTurnIndex,
+        runEndReason: reason,
+        activeTurnState: 'idle',
+        retryState: null,
+      },
+    });
   };
 
   useEffect(() => {
+    if (!tasksLoaded || applyingTaskRef.current) {
+      return;
+    }
+
+    if (!currentTaskIdRef.current) {
+      if (!hasTaskPayload()) {
+        return;
+      }
+      ensureCurrentTask();
+      return;
+    }
+
+    persistCurrentTask();
+    // eslint-disable-next-line max-len
+  }, [activeTurnState, conversationId, currentTurnIndex, excludeThought, filePath, includeHistoryContext, maxRoundsInput, queue, rawContent, retryState, runEndReason, runLogs, runStatus, selectedRoles, skipPermissions, stopOnNoChanges, tasksLoaded, turnRecords, watchDir, watchExtensionsInput, workDir]);
+
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (!tasksLoaded || applyingTaskRef.current) {
+        return;
+      }
+      persistCurrentTask();
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [tasksLoaded]);
+
+  useEffect(() => {
     window.__REBUILDCHAT_TEST_API__ = {
+      clearPersistedTasks,
+      flushPersistedTasks,
+      resumePersistedTask: async (index: number) => {
+        const task = persistedTasksRef.current[index];
+        if (task) {
+          await handleResumeTask(task);
+        }
+      },
       seedPromptFile: seedPromptFileForTestApi,
       setRunConfig: setRunConfigForTestApi,
       getState: () => ({
         conversationId,
         currentTurnIndex,
+        currentTaskId,
+        effectiveMaxRounds,
+        persistedCurrentTurnIndex: getPersistedCurrentTurnIndex(),
+        persistedTaskCount: persistedTasksRef.current.length,
         queueLength: queueRef.current.length,
+        retryAttemptCount: retryState?.retryAttemptCount ?? null,
+        retryAt: retryState?.retryAt ?? null,
         runEndReason,
         runLogCount: runLogs.length,
         runStatus,
+        taskNotice,
         turnRecordCount: turnRecords.length,
         watchDir,
         workDir,
@@ -250,17 +674,38 @@ const RebuildChatPage: React.FC = () => {
     return () => {
       delete window.__REBUILDCHAT_TEST_API__;
     };
-  }, [conversationId, currentTurnIndex, runEndReason, runLogs.length, runStatus, turnRecords.length, watchDir, workDir]);
+    // eslint-disable-next-line max-len
+  }, [conversationId, currentTaskId, currentTurnIndex, effectiveMaxRounds, retryState?.retryAttemptCount, retryState?.retryAt, runEndReason, runLogs.length, runStatus, taskNotice, turnRecords.length, watchDir, workDir]);
 
-  const executeQueue = async (startIndex: number, initialConversationId: string | null) => {
+  const executeQueue = async (startIndex: number, initialConversationId: string | null, effectiveWatchDir: string) => {
     const runtime = getRebuildChatRuntimeDriver();
+    const runConfig = {
+      includeHistoryContext: pageStateRef.current.includeHistoryContext,
+      maxRounds: computeEffectiveMaxRounds(pageStateRef.current.maxRoundsInput, queueRef.current.length),
+      skipPermissions: pageStateRef.current.skipPermissions,
+      stopOnNoChanges: pageStateRef.current.stopOnNoChanges,
+      watchExtensionsInput: pageStateRef.current.watchExtensionsInput,
+      workDir: pageStateRef.current.workDir,
+    };
     const result = await executeRebuildChatRun({
       queue: queueRef.current,
       startIndex,
       initialConversationId,
-      includeHistoryContext,
-      maxRounds: effectiveMaxRounds,
-      stopOnNoChanges,
+      includeHistoryContext: runConfig.includeHistoryContext,
+      maxRounds: runConfig.maxRounds,
+      stopOnNoChanges: runConfig.stopOnNoChanges,
+      onTurnStart: ({ turnIndex }) => {
+        setActiveTurnState('running');
+        setCurrentTurnIndex(turnIndex);
+        persistCurrentTask({
+          status: 'running',
+          progress: {
+            currentTurnIndex: turnIndex,
+            activeTurnState: 'running',
+            retryState: null,
+          },
+        });
+      },
       control: {
         isPauseRequested: () => pauseRequestedRef.current,
         consumePauseRequest: () => {
@@ -271,24 +716,29 @@ const RebuildChatPage: React.FC = () => {
         isAbortRequested: () => abortRequestedRef.current,
       },
       executeTurn: async ({ prompt, conversationId: activeConversationId }) => {
-        const beforeSnapshot = watchDir ? await runtime.snapshotDirectory(watchDir, watchExtensionsInput) : {};
+        const beforeSnapshot = effectiveWatchDir ? await runtime.snapshotDirectory(effectiveWatchDir, runConfig.watchExtensionsInput) : {};
         const execution = await runtime.startAgyPrintTurn({
           prompt,
-          cwd: workDir,
+          cwd: runConfig.workDir,
           conversationId: activeConversationId,
-          skipPermissions,
+          skipPermissions: runConfig.skipPermissions,
         });
         currentExecutionRef.current = execution;
         const turnResult = await execution.promise;
         currentExecutionRef.current = null;
-        const afterSnapshot = watchDir ? await runtime.snapshotDirectory(watchDir, watchExtensionsInput) : {};
+        const afterSnapshot = effectiveWatchDir ? await runtime.snapshotDirectory(effectiveWatchDir, runConfig.watchExtensionsInput) : {};
         const fileChanges = runtime.compareDirectorySnapshots(beforeSnapshot, afterSnapshot);
+        const quotaRetry = parseQuotaRetry({
+          output: turnResult.output,
+          rawLog: turnResult.rawLog,
+        });
 
         return {
           conversationId: turnResult.conversationId ?? activeConversationId,
           exitCode: turnResult.exitCode,
           output: turnResult.output,
           fileChanges,
+          retryDirective: quotaRetry.directive,
         };
       },
       onConversationId: (nextConversationId) => {
@@ -297,20 +747,295 @@ const RebuildChatPage: React.FC = () => {
       onCurrentTurnIndex: (turnIndex) => {
         setCurrentTurnIndex(turnIndex);
       },
+      onTurnAdvanced: (turnIndex) => {
+        setActiveTurnState('idle');
+        persistCurrentTask({
+          progress: {
+            currentTurnIndex: turnIndex,
+            activeTurnState: 'idle',
+            retryState: null,
+          },
+        });
+      },
       onLog: appendRunLog,
       onTurnRecord: (record) => {
-        setTurnRecords((previous) => [
-          ...previous,
-          {
-            ...record,
-            id: `turn-${uuid(12)}`,
+        const nextRecord = {
+          ...record,
+          id: `turn-${uuid(12)}`,
+        };
+        const nextTurnRecords = [...pageStateRef.current.turnRecords, nextRecord];
+        if (record.status === 'completed') {
+          setActiveTurnState('completed_not_advanced');
+        }
+        setTurnRecords((previous) => [...previous, nextRecord]);
+        persistCurrentTask({
+          progress: {
+            currentTurnIndex: Math.max(record.turnNumber - 1, 0),
+            turnRecords: nextTurnRecords,
+            activeTurnState: record.status === 'completed' ? 'completed_not_advanced' : pageStateRef.current.activeTurnState,
+            retryState: null,
           },
-        ]);
+        });
       },
     });
 
+    if (result.status === 'waiting_retry' && result.retryDirective) {
+      const previousAttemptCount = pageStateRef.current.retryState?.retryAttemptCount ?? 0;
+      const nextRetryState: RetryState = {
+        reason: 'quota',
+        retryAt: result.retryDirective.retryAt,
+        retryDelayMs: result.retryDirective.retryDelayMs,
+        retryAttemptCount: previousAttemptCount + 1,
+        resumeTurnIndex: result.nextTurnIndex,
+        lastMatchedMessage: result.retryDirective.matchedText,
+        source: result.retryDirective.source,
+      };
+      const retryMessage = result.retryDirective.retryAt === null ? `当前轮命中额度限制，将按固定间隔 ${formatRetryDelay(result.retryDirective.retryDelayMs)} 自动重试。` : `当前轮命中额度限制，将在 ${formatRetryClock(result.retryDirective.retryAt)} 后自动重试，剩余约 ${formatRetryRemaining(result.retryDirective.retryAt, Date.now())}。`;
+
+      retryAutoResumeRef.current = true;
+      clearRetryTimeout();
+      currentExecutionRef.current = null;
+      setRetryState(nextRetryState);
+      setRunStatus('waiting_retry');
+      setRunEndReason(null);
+      setCurrentTurnIndex(result.nextTurnIndex);
+      setActiveTurnState('idle');
+      appendRunLog('system', retryMessage);
+      persistCurrentTask({
+        status: 'waiting_retry',
+        progress: {
+          currentTurnIndex: result.nextTurnIndex,
+          runEndReason: null,
+          activeTurnState: 'idle',
+          retryState: nextRetryState,
+        },
+      });
+      return;
+    }
+
     finishRun(result.status, result.endReason, result.nextTurnIndex);
   };
+
+  const currentPersistedTask = useMemo(() => {
+    return persistedTasks.find((task) => task.taskId === currentTaskId) || null;
+  }, [currentTaskId, persistedTasks]);
+
+  const checkPathExists = async (targetPath: string): Promise<boolean> => {
+    if (!targetPath) return false;
+
+    try {
+      await ipcBridge.fs.getFileMetadata.invoke({ path: targetPath });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const resolveExecutionEnvironment = async (nextWorkDir: string, nextWatchDir: string) => {
+    if (!nextWorkDir) {
+      Message.warning('请先选择 agy 工作目录。');
+      return { canRun: false, effectiveWatchDir: '' };
+    }
+
+    if (!(await checkPathExists(nextWorkDir))) {
+      const message = '当前 agy 工作目录不存在，请先修正目录后再继续。';
+      setTaskNotice(message);
+      Message.warning(message);
+      return { canRun: false, effectiveWatchDir: '' };
+    }
+
+    if (!nextWatchDir) {
+      return { canRun: true, effectiveWatchDir: '' };
+    }
+
+    if (!(await checkPathExists(nextWatchDir))) {
+      const message = '当前监控目录不存在，本次会按空快照继续运行。';
+      setTaskNotice(message);
+      Message.warning(message);
+      return { canRun: true, effectiveWatchDir: '' };
+    }
+
+    return { canRun: true, effectiveWatchDir: nextWatchDir };
+  };
+
+  const resumeExecution = (startIndex: number, initialConversationId: string | null, effectiveWatchDir: string, logText: string) => {
+    pauseRequestedRef.current = false;
+    abortRequestedRef.current = false;
+    retryAutoResumeRef.current = false;
+    clearRetryTimeout();
+    setTaskNotice('');
+    setCurrentTurnIndex(startIndex);
+    setActiveTurnState('idle');
+    setRunEndReason(null);
+    setRunStatus('running');
+    setRetryState(null);
+    persistCurrentTask({
+      status: 'running',
+      progress: {
+        currentTurnIndex: startIndex,
+        runEndReason: null,
+        activeTurnState: 'idle',
+        retryState: null,
+      },
+    });
+    appendRunLog('system', logText);
+    void executeQueue(startIndex, initialConversationId, effectiveWatchDir);
+  };
+
+  const applyPersistedTask = (task: RebuildChatPersistedTask, resumeMode: boolean = false) => {
+    applyingTaskRef.current = true;
+    queueRebuildSuppressedRef.current = 3;
+    pauseRequestedRef.current = false;
+    abortRequestedRef.current = false;
+    retryAutoResumeRef.current = false;
+    clearRetryTimeout();
+    currentExecutionRef.current = null;
+    currentTaskIdRef.current = task.taskId;
+    queueRef.current = task.queueSnapshot.map((item) => ({ ...item }));
+
+    setCurrentTaskId(task.taskId);
+    setFilePath(task.source.filePath);
+    setRawContent(task.source.rawContent);
+    setExcludeThought(task.source.excludeThought);
+    setSelectedRoles(task.source.selectedRoles);
+    setQueue(task.queueSnapshot.map((item) => ({ ...item })));
+    setSelectedQueueIds([]);
+    setErrorText('');
+    setWorkDir(task.workDir);
+    setWatchDir(task.watchDir);
+    setWatchExtensionsInput(task.watchExtensionsInput);
+    setMaxRoundsInput(task.maxRoundsInput);
+    setIncludeHistoryContext(task.includeHistoryContext);
+    setStopOnNoChanges(task.stopOnNoChanges);
+    setSkipPermissions(task.skipPermissions);
+    setConversationId(task.progress.conversationId);
+    setCurrentTurnIndex(task.progress.currentTurnIndex);
+    setRunEndReason(task.progress.runEndReason);
+    setRunLogs(task.progress.runLogs.map((entry) => ({ ...entry })));
+    setTurnRecords(task.progress.turnRecords.map((record) => ({ ...record })));
+    setRetryState(task.progress.retryState ? { ...task.progress.retryState } : null);
+    setRunStatus(normalizeLoadedRunStatus(task));
+    setActiveTurnState('idle');
+
+    const notices: string[] = [];
+    if (!resumeMode && (task.status === 'running' || task.status === 'stopping')) {
+      notices.push('这个任务上次关闭时仍在运行，恢复时会从未确认完成的轮次继续。');
+    }
+    if (task.status === 'waiting_retry' && task.progress.retryState) {
+      notices.push(`这个任务正处于额度等待状态。点击“恢复并继续”会先立即重试一次；若仍受限，则继续等待到 ${formatRetryClock(task.progress.retryState.retryAt)}。`);
+    }
+    setTaskNotice(notices.join(' '));
+
+    void checkPathExists(task.source.filePath)
+      .then((exists) => {
+        if (exists) {
+          return;
+        }
+
+        setTaskNotice((previous) => {
+          const sourceNotice = '原始 JSON 文件当前不可用，但你仍然可以按已保存队列继续。';
+          return previous ? `${previous} ${sourceNotice}` : sourceNotice;
+        });
+      })
+      .catch(() => {});
+
+    queueMicrotask(() => {
+      applyingTaskRef.current = false;
+    });
+  };
+
+  const handleLoadTask = (task: RebuildChatPersistedTask) => {
+    applyPersistedTask(task, false);
+    Message.success(`已载入任务：${getTaskTitle(task)}`);
+  };
+
+  const handleResumeTask = async (task: RebuildChatPersistedTask) => {
+    applyPersistedTask(task, true);
+    const { canRun, effectiveWatchDir } = await resolveExecutionEnvironment(task.workDir, task.watchDir);
+    if (!canRun) {
+      return;
+    }
+
+    appendRunLog('system', `已准备恢复任务，将继续第 ${getRebuildChatTaskResumeIndex(task) + 1} 轮。`);
+    window.setTimeout(() => {
+      resumeExecution(getRebuildChatTaskResumeIndex(task), task.progress.conversationId, effectiveWatchDir, `从持久化任务恢复，将从第 ${getRebuildChatTaskResumeIndex(task) + 1} 轮继续运行。`);
+    }, 0);
+  };
+
+  const handleDeleteTask = async (taskId: string) => {
+    if (currentTaskIdRef.current === taskId) {
+      currentTaskIdRef.current = null;
+      setCurrentTaskId(null);
+    }
+
+    commitPersistedTasks(persistedTasksRef.current.filter((task) => task.taskId !== taskId));
+    await saveTasksPromiseRef.current;
+    Message.success('已删除任务记录。');
+  };
+
+  useEffect(() => {
+    if (runStatus !== 'waiting_retry' || !retryState?.retryAt) {
+      return;
+    }
+
+    setRetryClockNow(Date.now());
+    const intervalId = window.setInterval(() => {
+      setRetryClockNow(Date.now());
+    }, 1000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [retryState?.retryAt, runStatus]);
+
+  useEffect(() => {
+    if (runStatus !== 'waiting_retry' || !retryState || !retryAutoResumeRef.current) {
+      clearRetryTimeout();
+      return;
+    }
+
+    const delayMs = Math.max((retryState.retryAt ?? Date.now()) - Date.now(), 0);
+    retryTimeoutRef.current = window.setTimeout(() => {
+      retryTimeoutRef.current = null;
+      void (async () => {
+        const activeRetryState = pageStateRef.current.retryState;
+        if (!activeRetryState) {
+          return;
+        }
+
+        const { canRun, effectiveWatchDir } = await resolveExecutionEnvironment(pageStateRef.current.workDir, pageStateRef.current.watchDir);
+        if (!canRun) {
+          retryAutoResumeRef.current = false;
+          clearRetryTimeout();
+          setRunStatus('paused');
+          setRetryState(null);
+          appendRunLog('system', '自动重试前发现运行目录不可用，已切换为暂停状态。');
+          persistCurrentTask({
+            status: 'paused',
+            progress: {
+              runEndReason: null,
+              activeTurnState: 'idle',
+              retryState: null,
+            },
+          });
+          return;
+        }
+
+        resumeExecution(activeRetryState.resumeTurnIndex, pageStateRef.current.conversationId, effectiveWatchDir, '额度等待结束，重新发送当前轮。');
+      })();
+    }, delayMs);
+
+    return () => {
+      clearRetryTimeout();
+    };
+  }, [retryState, runStatus]);
+
+  useEffect(() => {
+    return () => {
+      retryAutoResumeRef.current = false;
+      clearRetryTimeout();
+    };
+  }, []);
 
   const toggleRole = (role: string) => {
     setSelectedRoles((previous) => (previous.includes(role) ? previous.filter((item) => item !== role) : [...previous, role]));
@@ -337,7 +1062,7 @@ const RebuildChatPage: React.FC = () => {
 
       const nextPath = result[0];
       const nextContent = await ipcBridge.fs.readFile.invoke({ path: nextPath });
-      applyPromptFileSelection(nextPath, nextContent);
+      applyPromptFileSelection(nextPath, nextContent, undefined, undefined, true);
       Message.success('已加载对话文件。');
     } catch (error) {
       const message = parseError(error);
@@ -406,43 +1131,73 @@ const RebuildChatPage: React.FC = () => {
   };
 
   const handleStart = () => {
-    if (!queue.length) {
-      Message.warning('当前没有可发送的队列内容。');
-      return;
-    }
+    void (async () => {
+      if (!queue.length) {
+        Message.warning('当前没有可发送的队列内容。');
+        return;
+      }
 
-    if (!workDir) {
-      Message.warning('请先选择 agy 工作目录。');
-      return;
-    }
+      const { canRun, effectiveWatchDir } = await resolveExecutionEnvironment(workDir, watchDir);
+      if (!canRun) {
+        return;
+      }
 
-    pauseRequestedRef.current = false;
-    abortRequestedRef.current = false;
-    setRunLogs([]);
-    setTurnRecords([]);
-    setConversationId(null);
-    setCurrentTurnIndex(0);
-    setRunEndReason(null);
-    setRunStatus('running');
-    appendRunLog('system', '开始新一轮运行。');
-    void executeQueue(0, null);
+      const shouldForkTask = Boolean(currentPersistedTask && currentPersistedTask.status !== 'idle');
+      const startLog = createRunLogEntry('system', '开始新一轮运行。');
+      const nextTaskId = shouldForkTask || !currentTaskIdRef.current ? uuid() : currentTaskIdRef.current;
+      const createdAt = shouldForkTask || !currentPersistedTask ? Date.now() : currentPersistedTask.createdAt;
+
+      currentTaskIdRef.current = nextTaskId;
+      setCurrentTaskId(nextTaskId);
+      pauseRequestedRef.current = false;
+      abortRequestedRef.current = false;
+      retryAutoResumeRef.current = false;
+      clearRetryTimeout();
+      setRunLogs([startLog]);
+      setTurnRecords([]);
+      setConversationId(null);
+      setCurrentTurnIndex(0);
+      setRunEndReason(null);
+      setRunStatus('running');
+      setActiveTurnState('idle');
+      setRetryState(null);
+      setTaskNotice('');
+      const nextTask = buildPersistedTask(nextTaskId, createdAt, {
+        status: 'running',
+        progress: {
+          conversationId: null,
+          currentTurnIndex: 0,
+          effectiveMaxRounds,
+          runEndReason: null,
+          runLogs: [startLog],
+          turnRecords: [],
+          activeTurnState: 'idle',
+          retryState: null,
+        },
+      });
+      commitPersistedTasks([nextTask, ...persistedTasksRef.current.filter((task) => task.taskId !== nextTaskId)]);
+      void executeQueue(0, null, effectiveWatchDir);
+    })();
   };
 
   const handlePause = () => {
     if (runStatus !== 'running') return;
     pauseRequestedRef.current = true;
     setRunStatus('stopping');
+    persistCurrentTask({ status: 'stopping' });
     appendRunLog('system', '已请求暂停，将在当前轮完成后停下。');
   };
 
   const handleResume = () => {
-    if (runStatus !== 'paused') return;
-    pauseRequestedRef.current = false;
-    abortRequestedRef.current = false;
-    setRunEndReason(null);
-    setRunStatus('running');
-    appendRunLog('system', `从第 ${currentTurnIndex + 1} 轮继续运行。`);
-    void executeQueue(currentTurnIndex, conversationId);
+    void (async () => {
+      if (runStatus !== 'paused') return;
+      const { canRun, effectiveWatchDir } = await resolveExecutionEnvironment(workDir, watchDir);
+      if (!canRun) {
+        return;
+      }
+
+      resumeExecution(currentTurnIndex, conversationId, effectiveWatchDir, `从第 ${currentTurnIndex + 1} 轮继续运行。`);
+    })();
   };
 
   const handleAbort = async () => {
@@ -452,10 +1207,17 @@ const RebuildChatPage: React.FC = () => {
       return;
     }
 
+    if (runStatus === 'waiting_retry') {
+      appendRunLog('system', '已取消额度等待并中止本次运行。');
+      finishRun('completed', 'aborted', currentTurnIndex);
+      return;
+    }
+
     if (runStatus !== 'running' && runStatus !== 'stopping') return;
 
     abortRequestedRef.current = true;
     setRunStatus('stopping');
+    persistCurrentTask({ status: 'stopping' });
     appendRunLog('system', '正在中止当前运行。');
     try {
       await currentExecutionRef.current?.abort();
@@ -463,6 +1225,8 @@ const RebuildChatPage: React.FC = () => {
       appendRunLog('system', `中止进程时出错：${getRebuildChatRuntimeDriver().formatRuntimeError(error)}`);
     }
   };
+
+  const retrySummaryText = runStatus === 'waiting_retry' && retryState ? (retryState.retryAt === null ? `当前轮因额度限制暂停，按固定间隔 ${formatRetryDelay(retryState.retryDelayMs)} 自动重试。` : `当前轮因额度限制暂停，将在 ${formatRetryClock(retryState.retryAt)} 自动重试，剩余约 ${formatRetryRemaining(retryState.retryAt, retryClockNow)}。`) : '';
 
   return (
     <div className={styles.page} data-testid='rebuildchat-page'>
@@ -491,15 +1255,68 @@ const RebuildChatPage: React.FC = () => {
         <div className={styles.grid}>
           <div className={`${styles.column} ${styles.leftColumn}`}>
             <Card className={styles.panel} bordered={false}>
+              <div className={styles.panelTitle}>0. 任务列表</div>
+              <div className={styles.panelDesc}>这里保留本机已保存的 RebuildChat 任务。关闭程序后，下次可以在这里载入查看，或从上次进度继续跑。</div>
+
+              <Space direction='vertical' size={12} style={{ width: '100%', marginTop: 16 }}>
+                {taskNotice ? <div className={styles.notice}>{taskNotice}</div> : null}
+                {persistedTasks.length ? (
+                  <div className={styles.taskList} data-testid='task-list'>
+                    {persistedTasks.map((task) => (
+                      <div key={task.taskId} className={styles.taskCard} data-testid='task-card'>
+                        <div className={styles.taskHeader}>
+                          <div>
+                            <div className={styles.taskTitle}>{getTaskTitle(task)}</div>
+                            <div className={styles.taskMeta}>
+                              {task.status === 'completed' || task.status === 'aborted' ? <Tag color={task.status === 'completed' ? 'green' : 'orange'}>{getTaskStatusLabel(task.status)}</Tag> : task.status === 'failed' ? <Tag color='red'>{getTaskStatusLabel(task.status)}</Tag> : task.status === 'paused' ? <Tag color='blue'>{getTaskStatusLabel(task.status)}</Tag> : task.status === 'waiting_retry' ? <Tag color='orange'>{getTaskStatusLabel(task.status)}</Tag> : <Tag>{getTaskStatusLabel(task.status)}</Tag>}
+                              <Tag color='gray'>{getTaskProgressLabel(task)}</Tag>
+                              {task.progress.conversationId ? <Tag color='gray'>{task.progress.conversationId.slice(0, 8)}</Tag> : null}
+                            </div>
+                          </div>
+                          <div className={styles.taskMetaText}>{new Date(task.updatedAt).toLocaleString()}</div>
+                        </div>
+
+                        <div className={styles.taskMetaText}>{task.workDir || '未设置工作目录'}</div>
+                        {task.progress.retryState ? (
+                          <div className={styles.taskMetaText}>
+                            下次重试：{formatRetryClock(task.progress.retryState.retryAt)}，约 {formatRetryDelay(task.progress.retryState.retryDelayMs)} 后，已等待 {task.progress.retryState.retryAttemptCount} 次。
+                          </div>
+                        ) : null}
+
+                        <div className={styles.taskActions}>
+                          {canResumeRebuildChatTask(task) ? (
+                            <Button data-testid='task-resume-button' size='small' type='primary' onClick={() => void handleResumeTask(task)}>
+                              恢复并继续
+                            </Button>
+                          ) : null}
+                          <Button data-testid='task-load-button' size='small' onClick={() => void handleLoadTask(task)}>
+                            载入查看
+                          </Button>
+                          <Button data-testid='task-delete-button' size='small' status='danger' onClick={() => void handleDeleteTask(task.taskId)}>
+                            删除记录
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className={styles.queueEmpty}>
+                    <Empty description='还没有保存过 RebuildChat 任务。导入文件并开始编辑后，这里会自动出现任务记录。' />
+                  </div>
+                )}
+              </Space>
+            </Card>
+
+            <Card className={styles.panel} bordered={false}>
               <div className={styles.panelTitle}>1. 输入区</div>
               <div className={styles.panelDesc}>先选文件，再确认过滤条件。切换过滤条件会重建待发送队列。</div>
 
               <Space direction='vertical' size={16} style={{ width: '100%', marginTop: 16 }}>
                 <Space wrap>
-                  <Button data-testid='pick-json-file' type='primary' icon={<UploadOne theme='outline' size='18' fill='currentColor' />} loading={loading} onClick={handlePickFile}>
+                  <Button data-testid='pick-json-file' type='primary' icon={<UploadOne theme='outline' size='18' fill='currentColor' />} loading={loading} disabled={isRunLocked} onClick={handlePickFile}>
                     选择 JSON 文件
                   </Button>
-                  <Button data-testid='reload-json-file' icon={<Refresh theme='outline' size='18' fill='currentColor' />} disabled={!filePath || loading} onClick={handleReload}>
+                  <Button data-testid='reload-json-file' icon={<Refresh theme='outline' size='18' fill='currentColor' />} disabled={!filePath || loading || isRunLocked} onClick={handleReload}>
                     重新读取
                   </Button>
                 </Space>
@@ -508,7 +1325,7 @@ const RebuildChatPage: React.FC = () => {
 
                 <div>
                   <Text style={{ display: 'block', marginBottom: 8 }}>默认过滤 thought</Text>
-                  <Switch checked={excludeThought} onChange={(checked) => setExcludeThought(checked)} />
+                  <Switch checked={excludeThought} disabled={isRunLocked} onChange={(checked) => setExcludeThought(checked)} />
                 </div>
 
                 <div>
@@ -517,7 +1334,7 @@ const RebuildChatPage: React.FC = () => {
                     {(parseResult?.availableRoles || []).map((role) => {
                       const checked = selectedRoles.includes(role);
                       return (
-                        <Tag key={role} checkable checked={checked} onCheck={() => toggleRole(role)} color={checked ? 'blue' : undefined}>
+                        <Tag key={role} checkable checked={checked} onCheck={() => !isRunLocked && toggleRole(role)} color={checked ? 'blue' : undefined}>
                           {role}
                         </Tag>
                       );
@@ -550,27 +1367,31 @@ const RebuildChatPage: React.FC = () => {
                 <div>
                   <Text style={{ display: 'block', marginBottom: 8 }}>agy 工作目录</Text>
                   <div className={styles.inlinePicker}>
-                    <Input value={workDir} placeholder='选择 agy 运行目录' onChange={setWorkDir} />
-                    <Button onClick={() => void pickDirectory(setWorkDir)}>选目录</Button>
+                    <Input value={workDir} disabled={isRunLocked} placeholder='选择 agy 运行目录' onChange={setWorkDir} />
+                    <Button disabled={isRunLocked} onClick={() => void pickDirectory(setWorkDir)}>
+                      选目录
+                    </Button>
                   </div>
                 </div>
 
                 <div>
                   <Text style={{ display: 'block', marginBottom: 8 }}>产出监控目录</Text>
                   <div className={styles.inlinePicker}>
-                    <Input value={watchDir} placeholder='选择要监控的目录' onChange={setWatchDir} />
-                    <Button onClick={() => void pickDirectory(setWatchDir)}>选目录</Button>
+                    <Input value={watchDir} disabled={isRunLocked} placeholder='选择要监控的目录' onChange={setWatchDir} />
+                    <Button disabled={isRunLocked} onClick={() => void pickDirectory(setWatchDir)}>
+                      选目录
+                    </Button>
                   </div>
                 </div>
 
                 <div className={styles.configGrid}>
                   <div>
                     <Text style={{ display: 'block', marginBottom: 8 }}>监控后缀</Text>
-                    <Input value={watchExtensionsInput} placeholder='.md,.ts,.json，留空表示全部' onChange={setWatchExtensionsInput} />
+                    <Input value={watchExtensionsInput} disabled={isRunLocked} placeholder='.md,.ts,.json，留空表示全部' onChange={setWatchExtensionsInput} />
                   </div>
                   <div>
                     <Text style={{ display: 'block', marginBottom: 8 }}>最大轮数</Text>
-                    <Input value={maxRoundsInput} placeholder='留空表示跑完整个队列' onChange={setMaxRoundsInput} />
+                    <Input value={maxRoundsInput} disabled={isRunLocked} placeholder='留空表示跑完整个队列' onChange={setMaxRoundsInput} />
                   </div>
                 </div>
 
@@ -580,7 +1401,7 @@ const RebuildChatPage: React.FC = () => {
                       <div className={styles.toggleTitle}>第二轮起拼接历史</div>
                       <div className={styles.roleHint}>关闭时每轮只发当前条目，开启时会把前面条目一起拼进 prompt。</div>
                     </div>
-                    <Switch checked={includeHistoryContext} onChange={(checked) => setIncludeHistoryContext(checked)} />
+                    <Switch checked={includeHistoryContext} disabled={isRunLocked} onChange={(checked) => setIncludeHistoryContext(checked)} />
                   </div>
 
                   <div className={styles.toggleRow}>
@@ -588,7 +1409,7 @@ const RebuildChatPage: React.FC = () => {
                       <div className={styles.toggleTitle}>无产出自动停止</div>
                       <div className={styles.roleHint}>如果本轮前后目录快照没有新增 / 修改 / 删除，就结束运行。</div>
                     </div>
-                    <Switch checked={stopOnNoChanges} onChange={(checked) => setStopOnNoChanges(checked)} />
+                    <Switch checked={stopOnNoChanges} disabled={isRunLocked} onChange={(checked) => setStopOnNoChanges(checked)} />
                   </div>
 
                   <div className={styles.toggleRow}>
@@ -596,7 +1417,7 @@ const RebuildChatPage: React.FC = () => {
                       <div className={styles.toggleTitle}>自动跳过权限确认</div>
                       <div className={styles.roleHint}>会追加 `--dangerously-skip-permissions`，适合内部环境快速跑通，但风险更高。</div>
                     </div>
-                    <Switch checked={skipPermissions} onChange={(checked) => setSkipPermissions(checked)} />
+                    <Switch checked={skipPermissions} disabled={isRunLocked} onChange={(checked) => setSkipPermissions(checked)} />
                   </div>
                 </div>
               </Space>
@@ -612,10 +1433,10 @@ const RebuildChatPage: React.FC = () => {
                 <div className={styles.notice}>切换 role 或 thought 过滤开关时，会按当前规则重新生成队列，之前的临时编辑不会保留。</div>
 
                 <Space wrap>
-                  <Button data-testid='queue-add-custom' type='primary' icon={<Plus theme='outline' size='18' fill='currentColor' />} onClick={handleAddCustom} disabled={runStatus === 'running' || runStatus === 'stopping'}>
+                  <Button data-testid='queue-add-custom' type='primary' icon={<Plus theme='outline' size='18' fill='currentColor' />} onClick={handleAddCustom} disabled={isRunLocked}>
                     新增自定义条目
                   </Button>
-                  <Button data-testid='queue-delete-selected' status='danger' icon={<Delete theme='outline' size='18' fill='currentColor' />} disabled={!selectedQueueIds.length || runStatus === 'running' || runStatus === 'stopping'} onClick={handleDeleteSelected}>
+                  <Button data-testid='queue-delete-selected' status='danger' icon={<Delete theme='outline' size='18' fill='currentColor' />} disabled={!selectedQueueIds.length || isRunLocked} onClick={handleDeleteSelected}>
                     删除选中项
                   </Button>
                 </Space>
@@ -643,7 +1464,7 @@ const RebuildChatPage: React.FC = () => {
                       <div key={item.id} className={styles.queueCard}>
                         <div className={styles.queueHeader}>
                           <div className={styles.queueHeaderLeft}>
-                            <Checkbox checked={selectedQueueIds.includes(item.id)} disabled={runStatus === 'running' || runStatus === 'stopping'} onChange={() => toggleQueueSelection(item.id)} />
+                            <Checkbox checked={selectedQueueIds.includes(item.id)} disabled={isRunLocked} onChange={() => toggleQueueSelection(item.id)} />
                             <Text bold>第 {index + 1} 条</Text>
                             <div className={styles.queueMeta}>
                               {item.isCustom ? <Tag color='green'>自定义</Tag> : <Tag color='blue'>提取项</Tag>}
@@ -652,14 +1473,14 @@ const RebuildChatPage: React.FC = () => {
                               {item.tokenCount !== null ? <Tag color='gray'>{item.tokenCount} tokens</Tag> : null}
                             </div>
                           </div>
-                          <Button size='small' status='danger' disabled={runStatus === 'running' || runStatus === 'stopping'} onClick={() => handleDeleteSingle(item.id)}>
+                          <Button size='small' status='danger' disabled={isRunLocked} onClick={() => handleDeleteSingle(item.id)}>
                             删除
                           </Button>
                         </div>
 
                         <div className={styles.queueRow}>
-                          <Input value={item.role} disabled={runStatus === 'running' || runStatus === 'stopping'} placeholder='role' onChange={(value) => handleQueueChange(item.id, { role: value })} />
-                          <Input.TextArea value={item.text} disabled={runStatus === 'running' || runStatus === 'stopping'} placeholder='输入要发送给 agy 的文本' autoSize={{ minRows: 3, maxRows: 12 }} onChange={(value) => handleQueueChange(item.id, { text: value })} />
+                          <Input value={item.role} disabled={isRunLocked} placeholder='role' onChange={(value) => handleQueueChange(item.id, { role: value })} />
+                          <Input.TextArea value={item.text} disabled={isRunLocked} placeholder='输入要发送给 agy 的文本' autoSize={{ minRows: 3, maxRows: 12 }} onChange={(value) => handleQueueChange(item.id, { text: value })} />
                         </div>
                       </div>
                     ))}
@@ -698,8 +1519,16 @@ const RebuildChatPage: React.FC = () => {
                   </div>
                 </div>
 
+                {retrySummaryText ? (
+                  <div className={styles.waitNotice} data-testid='run-retry-waiting'>
+                    <div>额度等待：{retrySummaryText}</div>
+                    <div>恢复方式：继续当前会话，重发第 {(retryState?.resumeTurnIndex ?? currentTurnIndex) + 1} 轮。</div>
+                    {retryState?.lastMatchedMessage ? <div>最近提示：{retryState.lastMatchedMessage}</div> : null}
+                  </div>
+                ) : null}
+
                 <Space wrap>
-                  <Button data-testid='run-start' type='primary' icon={<Play theme='outline' size='18' fill='currentColor' />} disabled={runStatus === 'running' || runStatus === 'stopping' || !queue.length} onClick={handleStart}>
+                  <Button data-testid='run-start' type='primary' icon={<Play theme='outline' size='18' fill='currentColor' />} disabled={runStatus === 'running' || runStatus === 'stopping' || runStatus === 'waiting_retry' || !queue.length} onClick={handleStart}>
                     开始
                   </Button>
                   <Button data-testid='run-pause' icon={<Pause theme='outline' size='18' fill='currentColor' />} disabled={runStatus !== 'running'} onClick={handlePause}>
@@ -708,7 +1537,7 @@ const RebuildChatPage: React.FC = () => {
                   <Button data-testid='run-resume' icon={<Right theme='outline' size='18' fill='currentColor' />} disabled={runStatus !== 'paused'} onClick={handleResume}>
                     继续
                   </Button>
-                  <Button data-testid='run-abort' status='danger' icon={<CloseOne theme='outline' size='18' fill='currentColor' />} disabled={runStatus !== 'running' && runStatus !== 'stopping' && runStatus !== 'paused'} onClick={() => void handleAbort()}>
+                  <Button data-testid='run-abort' status='danger' icon={<CloseOne theme='outline' size='18' fill='currentColor' />} disabled={runStatus !== 'running' && runStatus !== 'stopping' && runStatus !== 'paused' && runStatus !== 'waiting_retry'} onClick={() => void handleAbort()}>
                     中止
                   </Button>
                 </Space>

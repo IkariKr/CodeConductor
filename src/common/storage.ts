@@ -5,6 +5,7 @@
  */
 
 import type { AcpBackend, AcpBackendConfig } from '@/types/acpTypes';
+import type { RebuildChatPersistedTask } from '@/common/rebuildchat/persistedTask';
 import { storage } from '@office-ai/platform';
 
 /**
@@ -91,6 +92,7 @@ export interface IConfigStorageRefer {
     skippedClis?: string[]; // CLI IDs that user chose to skip / 用户选择跳过的 CLI ID 列表
     neverAskAgain?: boolean; // Never show install prompt again / 永不再显示安装提示
   };
+  'rebuildchat.tasks'?: RebuildChatPersistedTask[];
 }
 
 export interface CustomCommandConfig {

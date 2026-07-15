@@ -29,8 +29,13 @@ if not exist "node_modules" (
 )
 
 set FORGE_SKIP_NATIVE_REBUILD=true
-set CodeConductor_DEV_PORT=3100
-set CodeConductor_LOGGER_PORT=9100
+if not defined CodeConductor_DEV_PORT set "CodeConductor_DEV_PORT=3100"
+if not defined CodeConductor_LOGGER_PORT set "CodeConductor_LOGGER_PORT=9100"
+
+call :ensure_available_port CodeConductor_DEV_PORT "dev server"
+if errorlevel 1 goto :failed
+call :ensure_available_port CodeConductor_LOGGER_PORT "logger"
+if errorlevel 1 goto :failed
 
 if /i "%~1"=="--check" (
   echo [RebuildChat] Environment check passed.
@@ -44,6 +49,42 @@ echo [RebuildChat] Starting app...
 call npm start
 if errorlevel 1 goto :failed
 
+exit /b 0
+
+:ensure_available_port
+set "PORT_VAR=%~1"
+set "PORT_LABEL=%~2"
+call set "PORT_VALUE=%%%PORT_VAR%%%"
+
+call :is_port_in_use "%PORT_VALUE%"
+if errorlevel 1 (
+  echo [RebuildChat] Using %PORT_LABEL% port %PORT_VALUE%.
+  exit /b 0
+)
+
+echo [RebuildChat] Port %PORT_VALUE% for %PORT_LABEL% is already in use. Looking for a free port...
+call :get_free_port NEXT_FREE_PORT
+if errorlevel 1 exit /b 1
+
+set "%PORT_VAR%=%NEXT_FREE_PORT%"
+echo [RebuildChat] Switched %PORT_LABEL% port to %NEXT_FREE_PORT%.
+exit /b 0
+
+:is_port_in_use
+set "PORT_QUERY_RESULT="
+for /f %%i in ('powershell -NoProfile -Command "$port=%~1; if (Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue) { 'busy' } else { 'free' }"') do set "PORT_QUERY_RESULT=%%i"
+if /i "%PORT_QUERY_RESULT%"=="free" exit /b 1
+exit /b 0
+
+:get_free_port
+set "FREE_PORT_RESULT="
+for /f %%i in ('powershell -NoProfile -Command "$listener=[System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback,0); $listener.Start(); $port=$listener.LocalEndpoint.Port; $listener.Stop(); Write-Output $port"') do set "FREE_PORT_RESULT=%%i"
+if not defined FREE_PORT_RESULT (
+  echo [RebuildChat] Error: unable to find a free local port.
+  exit /b 1
+)
+
+set "%~1=%FREE_PORT_RESULT%"
 exit /b 0
 
 :missing_node

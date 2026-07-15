@@ -1,4 +1,5 @@
 import type { EditablePromptQueueItem } from './editablePromptQueue';
+import { getStartTurnInputValue } from './manualStart';
 import type { QuotaRetryDirectiveSource } from './quotaRetryParser';
 import type { RunEndReason, RunLogKind, RunStatus, RebuildChatTurnRecord } from './rebuildChatExecutor';
 
@@ -56,8 +57,10 @@ export interface RebuildChatPersistedTask {
   watchExtensionsInput: string;
   includeHistoryContext: boolean;
   maxRoundsInput: string;
+  startTurnInput: string;
   stopOnNoChanges: boolean;
   skipPermissions: boolean;
+  reuseConversationOnManualStart: boolean;
   progress: RebuildChatPersistedTaskProgress;
 }
 
@@ -116,13 +119,13 @@ export const normalizeRebuildChatTasks = (value: unknown): RebuildChatPersistedT
   }
 
   return sortRebuildChatTasks(
-    value.filter((item): item is RebuildChatPersistedTask => {
-      if (!item || typeof item !== 'object') return false;
+    value.flatMap((item): RebuildChatPersistedTask[] => {
+      if (!item || typeof item !== 'object') return [];
 
       const candidate = item as Partial<RebuildChatPersistedTask>;
       const retryState = candidate.progress?.retryState;
       const hasValidRetryState = typeof retryState === 'undefined' || retryState === null || (typeof retryState === 'object' && retryState.reason === 'quota' && (typeof retryState.retryAt === 'number' || retryState.retryAt === null) && typeof retryState.retryDelayMs === 'number' && typeof retryState.retryAttemptCount === 'number' && typeof retryState.resumeTurnIndex === 'number' && typeof retryState.lastMatchedMessage === 'string' && (retryState.source === 'output' || retryState.source === 'rawLog'));
-      return (
+      const isValid =
         typeof candidate.taskId === 'string' &&
         typeof candidate.createdAt === 'number' &&
         typeof candidate.updatedAt === 'number' &&
@@ -146,8 +149,22 @@ export const normalizeRebuildChatTasks = (value: unknown): RebuildChatPersistedT
         Array.isArray(candidate.progress?.runLogs) &&
         Array.isArray(candidate.progress?.turnRecords) &&
         typeof candidate.progress?.activeTurnState === 'string' &&
-        hasValidRetryState
-      );
+        hasValidRetryState;
+
+      if (!isValid) {
+        return [];
+      }
+
+      const queueLength = candidate.queueSnapshot?.length ?? 0;
+      const currentTurnIndex = candidate.progress?.currentTurnIndex ?? 0;
+
+      return [
+        {
+          ...(candidate as RebuildChatPersistedTask),
+          startTurnInput: typeof candidate.startTurnInput === 'string' ? candidate.startTurnInput : getStartTurnInputValue(currentTurnIndex, queueLength),
+          reuseConversationOnManualStart: typeof candidate.reuseConversationOnManualStart === 'boolean' ? candidate.reuseConversationOnManualStart : false,
+        },
+      ];
     })
   );
 };

@@ -41,8 +41,10 @@ const createTask = (overrides: Partial<RebuildChatPersistedTask> = {}): RebuildC
   watchExtensionsInput: '.md',
   includeHistoryContext: false,
   maxRoundsInput: '2',
+  startTurnInput: '2',
   stopOnNoChanges: true,
   skipPermissions: false,
+  reuseConversationOnManualStart: false,
   progress: {
     conversationId: 'conv-1',
     currentTurnIndex: 1,
@@ -113,6 +115,16 @@ describe('rebuildChatPersistedTask', () => {
 
     const normalized = normalizeRebuildChatTasks([createTask({ taskId: 'valid' }), { bad: true }]);
     expect(normalized.map((task) => task.taskId)).toEqual(['valid']);
+  });
+
+  test('fills manual start defaults for legacy task records', () => {
+    const legacyTask = createTask({ taskId: 'legacy' }) as unknown as Record<string, unknown>;
+    delete legacyTask.startTurnInput;
+    delete legacyTask.reuseConversationOnManualStart;
+
+    const normalized = normalizeRebuildChatTasks([legacyTask]);
+    expect(normalized[0]?.startTurnInput).toBe('2');
+    expect(normalized[0]?.reuseConversationOnManualStart).toBe(false);
   });
 
   test('keeps valid retry state during normalization', () => {

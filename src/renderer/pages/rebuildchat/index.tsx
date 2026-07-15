@@ -1,5 +1,6 @@
 import { ipcBridge } from '@/common';
 import { appendCustomPromptQueueItem, createEditablePromptQueue, removeEditablePromptQueueItems, updateEditablePromptQueueItem, type EditablePromptQueueItem } from '@/common/rebuildchat/editablePromptQueue';
+import { getStartTurnInputValue, resolveManualStartConversationId, resolveRequestedStartIndex } from '@/common/rebuildchat/manualStart';
 import { canResumeRebuildChatTask, getPersistedTaskStatus, getRebuildChatTaskResumeIndex, sortRebuildChatTasks, type RebuildChatActiveTurnState, type RebuildChatPersistedLogEntry, type RebuildChatPersistedRetryState, type RebuildChatPersistedTask, type RebuildChatPersistedTaskStatus, type RebuildChatPersistedTurnRecord } from '@/common/rebuildchat/persistedTask';
 import { parsePromptFile, type ParsePromptFileResult } from '@/common/rebuildchat/promptFileParser';
 import { executeRebuildChatRun, summarizeFileChanges, type RunEndReason, type RunLogKind, type RunStatus } from '@/common/rebuildchat/rebuildChatExecutor';
@@ -32,7 +33,9 @@ interface RebuildChatSeedPromptFilePayload {
 interface RebuildChatRunConfigPayload {
   includeHistoryContext?: boolean;
   maxRoundsInput?: string;
+  reuseConversationOnManualStart?: boolean;
   skipPermissions?: boolean;
+  startTurnInput?: string;
   stopOnNoChanges?: boolean;
   watchDir?: string;
   watchExtensionsInput?: string;
@@ -44,6 +47,16 @@ interface RebuildChatFilePickerOverride {
   rawContent: string;
   watchDir?: string;
   workDir?: string;
+}
+
+interface StartRunWithFreshTaskParams {
+  effectiveWatchDir: string;
+  forceFork?: boolean;
+  initialConversationId: string | null;
+  reuseConversationOnManualStartValue?: boolean;
+  seedLogs: RunLogEntry[];
+  startIndex: number;
+  startTurnInputValue?: string;
 }
 
 interface RebuildChatTestApi {
@@ -59,9 +72,11 @@ interface RebuildChatTestApi {
     queueLength: number;
     retryAttemptCount: number | null;
     retryAt: number | null;
+    reuseConversationOnManualStart: boolean;
     runEndReason: RunEndReason;
     runLogCount: number;
     runStatus: RunStatus;
+    startTurnInput: string;
     taskNotice: string;
     turnRecordCount: number;
     watchDir: string;
@@ -160,6 +175,19 @@ const computeEffectiveMaxRounds = (maxRoundsValue: string, queueLength: number) 
   return Math.min(queueLength, Math.floor(parsed));
 };
 
+const getStartTurnValidationMessage = (error: 'empty' | 'invalid' | 'out_of_range', queueLength: number): string => {
+  switch (error) {
+    case 'empty':
+      return '请先填写起始轮次。';
+    case 'invalid':
+      return '起始轮次必须是正整数。';
+    case 'out_of_range':
+      return `起始轮次必须在 1 到 ${Math.max(queueLength, 1)} 之间。`;
+    default:
+      return '起始轮次无效。';
+  }
+};
+
 const formatRetryDelay = (delayMs: number): string => {
   const totalSeconds = Math.max(Math.ceil(delayMs / 1000), 0);
   const hours = Math.floor(totalSeconds / 3600);
@@ -205,9 +233,11 @@ const RebuildChatPage: React.FC = () => {
   const [watchDir, setWatchDir] = useState('');
   const [watchExtensionsInput, setWatchExtensionsInput] = useState('');
   const [maxRoundsInput, setMaxRoundsInput] = useState('');
+  const [startTurnInput, setStartTurnInput] = useState('1');
   const [includeHistoryContext, setIncludeHistoryContext] = useState(false);
   const [stopOnNoChanges, setStopOnNoChanges] = useState(true);
   const [skipPermissions, setSkipPermissions] = useState(false);
+  const [reuseConversationOnManualStart, setReuseConversationOnManualStart] = useState(false);
 
   const [runStatus, setRunStatus] = useState<RunStatus>('idle');
   const [runEndReason, setRunEndReason] = useState<RunEndReason>(null);
@@ -244,9 +274,11 @@ const RebuildChatPage: React.FC = () => {
     watchDir: '',
     watchExtensionsInput: '',
     maxRoundsInput: '',
+    startTurnInput: '1',
     includeHistoryContext: false,
     stopOnNoChanges: true,
     skipPermissions: false,
+    reuseConversationOnManualStart: false,
     runStatus: 'idle' as RunStatus,
     runEndReason: null as RunEndReason,
     runLogs: [] as RunLogEntry[],
@@ -288,8 +320,10 @@ const RebuildChatPage: React.FC = () => {
       watchExtensionsInput: state.watchExtensionsInput,
       includeHistoryContext: state.includeHistoryContext,
       maxRoundsInput: state.maxRoundsInput,
+      startTurnInput: state.startTurnInput,
       stopOnNoChanges: state.stopOnNoChanges,
       skipPermissions: state.skipPermissions,
+      reuseConversationOnManualStart: state.reuseConversationOnManualStart,
       progress: {
         conversationId: state.conversationId,
         currentTurnIndex: state.currentTurnIndex,
@@ -382,8 +416,10 @@ const RebuildChatPage: React.FC = () => {
             watchExtensionsInput,
             includeHistoryContext,
             maxRoundsInput,
+            startTurnInput,
             stopOnNoChanges,
             skipPermissions,
+            reuseConversationOnManualStart,
             progress: {
               conversationId,
               currentTurnIndex,
@@ -433,9 +469,11 @@ const RebuildChatPage: React.FC = () => {
       watchDir,
       watchExtensionsInput,
       maxRoundsInput,
+      startTurnInput,
       includeHistoryContext,
       stopOnNoChanges,
       skipPermissions,
+      reuseConversationOnManualStart,
       runStatus,
       runEndReason,
       runLogs,
@@ -446,7 +484,7 @@ const RebuildChatPage: React.FC = () => {
       retryState,
     };
     // eslint-disable-next-line max-len
-  }, [activeTurnState, conversationId, currentTurnIndex, excludeThought, filePath, includeHistoryContext, maxRoundsInput, queue, rawContent, retryState, runEndReason, runLogs, runStatus, selectedRoles, skipPermissions, stopOnNoChanges, turnRecords, watchDir, watchExtensionsInput, workDir]);
+  }, [activeTurnState, conversationId, currentTurnIndex, excludeThought, filePath, includeHistoryContext, maxRoundsInput, queue, rawContent, retryState, reuseConversationOnManualStart, runEndReason, runLogs, runStatus, selectedRoles, skipPermissions, startTurnInput, stopOnNoChanges, turnRecords, watchDir, watchExtensionsInput, workDir]);
 
   useEffect(() => {
     void loadRebuildChatTasks()
@@ -497,6 +535,7 @@ const RebuildChatPage: React.FC = () => {
     setSelectedQueueIds([]);
     setCurrentTurnIndex(0);
     setActiveTurnState('idle');
+    setStartTurnInput(getStartTurnInputValue(0, filteredChunks.length));
   }, [filteredChunks]);
 
   const queueStats = useMemo(() => {
@@ -515,6 +554,25 @@ const RebuildChatPage: React.FC = () => {
   }, [maxRoundsInput, queue.length]);
 
   const isRunLocked = runStatus === 'running' || runStatus === 'stopping' || runStatus === 'waiting_retry';
+  const syncStartTurnInputToIndex = (index: number, queueLengthOverride?: number) => {
+    const queueLength = typeof queueLengthOverride === 'number' ? queueLengthOverride : pageStateRef.current.queue.length;
+    setStartTurnInput(getStartTurnInputValue(index, queueLength));
+  };
+
+  const resolveRequestedStart = (fallbackIndex: number, startTurnValue: string = pageStateRef.current.startTurnInput) => {
+    const resolved = resolveRequestedStartIndex({
+      fallbackIndex,
+      queueLength: queueRef.current.length,
+      startTurnInput: startTurnValue,
+    });
+
+    if (resolved.ok === false) {
+      Message.warning(getStartTurnValidationMessage(resolved.error, queueRef.current.length));
+      return null;
+    }
+
+    return resolved;
+  };
 
   const appendRunLog = (kind: RunLogKind, text: string) => {
     setRunLogs((previous) => [...previous, createRunLogEntry(kind, text)]);
@@ -541,6 +599,7 @@ const RebuildChatPage: React.FC = () => {
     setConversationId(null);
     setActiveTurnState('idle');
     setRetryState(null);
+    syncStartTurnInputToIndex(0, queueRef.current.length);
     setSelectedQueueIds([]);
     setTaskNotice('');
   };
@@ -571,17 +630,21 @@ const RebuildChatPage: React.FC = () => {
     const nextWatchDir = payload.watchDir;
     const nextWatchExtensions = payload.watchExtensionsInput;
     const nextMaxRounds = payload.maxRoundsInput;
+    const nextStartTurn = payload.startTurnInput;
     const nextIncludeHistory = payload.includeHistoryContext;
     const nextStopOnNoChanges = payload.stopOnNoChanges;
     const nextSkipPermissions = payload.skipPermissions;
+    const nextReuseConversation = payload.reuseConversationOnManualStart;
 
     if (typeof nextWorkDir === 'string') setWorkDir(nextWorkDir);
     if (typeof nextWatchDir === 'string') setWatchDir(nextWatchDir);
     if (typeof nextWatchExtensions === 'string') setWatchExtensionsInput(nextWatchExtensions);
     if (typeof nextMaxRounds === 'string') setMaxRoundsInput(nextMaxRounds);
+    if (typeof nextStartTurn === 'string') setStartTurnInput(nextStartTurn);
     if (typeof nextIncludeHistory === 'boolean') setIncludeHistoryContext(nextIncludeHistory);
     if (typeof nextStopOnNoChanges === 'boolean') setStopOnNoChanges(nextStopOnNoChanges);
     if (typeof nextSkipPermissions === 'boolean') setSkipPermissions(nextSkipPermissions);
+    if (typeof nextReuseConversation === 'boolean') setReuseConversationOnManualStart(nextReuseConversation);
   };
 
   const finishRun = (status: RunStatus, reason: RunEndReason, nextTurnIndex?: number) => {
@@ -596,6 +659,7 @@ const RebuildChatPage: React.FC = () => {
     setRetryState(null);
     if (typeof nextTurnIndex === 'number') {
       setCurrentTurnIndex(nextTurnIndex);
+      syncStartTurnInputToIndex(nextTurnIndex);
     }
     persistCurrentTask({
       status: getPersistedTaskStatus(status, reason),
@@ -623,7 +687,7 @@ const RebuildChatPage: React.FC = () => {
 
     persistCurrentTask();
     // eslint-disable-next-line max-len
-  }, [activeTurnState, conversationId, currentTurnIndex, excludeThought, filePath, includeHistoryContext, maxRoundsInput, queue, rawContent, retryState, runEndReason, runLogs, runStatus, selectedRoles, skipPermissions, stopOnNoChanges, tasksLoaded, turnRecords, watchDir, watchExtensionsInput, workDir]);
+  }, [activeTurnState, conversationId, currentTurnIndex, excludeThought, filePath, includeHistoryContext, maxRoundsInput, queue, rawContent, retryState, reuseConversationOnManualStart, runEndReason, runLogs, runStatus, selectedRoles, skipPermissions, startTurnInput, stopOnNoChanges, tasksLoaded, turnRecords, watchDir, watchExtensionsInput, workDir]);
 
   useEffect(() => {
     const handleBeforeUnload = () => {
@@ -661,9 +725,11 @@ const RebuildChatPage: React.FC = () => {
         queueLength: queueRef.current.length,
         retryAttemptCount: retryState?.retryAttemptCount ?? null,
         retryAt: retryState?.retryAt ?? null,
+        reuseConversationOnManualStart,
         runEndReason,
         runLogCount: runLogs.length,
         runStatus,
+        startTurnInput,
         taskNotice,
         turnRecordCount: turnRecords.length,
         watchDir,
@@ -675,7 +741,7 @@ const RebuildChatPage: React.FC = () => {
       delete window.__REBUILDCHAT_TEST_API__;
     };
     // eslint-disable-next-line max-len
-  }, [conversationId, currentTaskId, currentTurnIndex, effectiveMaxRounds, retryState?.retryAttemptCount, retryState?.retryAt, runEndReason, runLogs.length, runStatus, taskNotice, turnRecords.length, watchDir, workDir]);
+  }, [conversationId, currentTaskId, currentTurnIndex, effectiveMaxRounds, retryState?.retryAttemptCount, retryState?.retryAt, reuseConversationOnManualStart, runEndReason, runLogs.length, runStatus, startTurnInput, taskNotice, turnRecords.length, watchDir, workDir]);
 
   const executeQueue = async (startIndex: number, initialConversationId: string | null, effectiveWatchDir: string) => {
     const runtime = getRebuildChatRuntimeDriver();
@@ -697,6 +763,7 @@ const RebuildChatPage: React.FC = () => {
       onTurnStart: ({ turnIndex }) => {
         setActiveTurnState('running');
         setCurrentTurnIndex(turnIndex);
+        syncStartTurnInputToIndex(turnIndex);
         persistCurrentTask({
           status: 'running',
           progress: {
@@ -746,9 +813,11 @@ const RebuildChatPage: React.FC = () => {
       },
       onCurrentTurnIndex: (turnIndex) => {
         setCurrentTurnIndex(turnIndex);
+        syncStartTurnInputToIndex(turnIndex);
       },
       onTurnAdvanced: (turnIndex) => {
         setActiveTurnState('idle');
+        syncStartTurnInputToIndex(turnIndex);
         persistCurrentTask({
           progress: {
             currentTurnIndex: turnIndex,
@@ -799,6 +868,7 @@ const RebuildChatPage: React.FC = () => {
       setRunStatus('waiting_retry');
       setRunEndReason(null);
       setCurrentTurnIndex(result.nextTurnIndex);
+      syncStartTurnInputToIndex(result.nextTurnIndex);
       setActiveTurnState('idle');
       appendRunLog('system', retryMessage);
       persistCurrentTask({
@@ -815,10 +885,6 @@ const RebuildChatPage: React.FC = () => {
 
     finishRun(result.status, result.endReason, result.nextTurnIndex);
   };
-
-  const currentPersistedTask = useMemo(() => {
-    return persistedTasks.find((task) => task.taskId === currentTaskId) || null;
-  }, [currentTaskId, persistedTasks]);
 
   const checkPathExists = async (targetPath: string): Promise<boolean> => {
     if (!targetPath) return false;
@@ -858,6 +924,48 @@ const RebuildChatPage: React.FC = () => {
     return { canRun: true, effectiveWatchDir: nextWatchDir };
   };
 
+  const startRunWithFreshTask = (params: StartRunWithFreshTaskParams) => {
+    const baseTask = persistedTasksRef.current.find((task) => task.taskId === currentTaskIdRef.current) ?? null;
+    const shouldForkTask = Boolean(params.forceFork || (baseTask && baseTask.status !== 'idle'));
+    const nextTaskId = shouldForkTask || !currentTaskIdRef.current ? uuid() : currentTaskIdRef.current;
+    const createdAt = shouldForkTask || !baseTask ? Date.now() : baseTask.createdAt;
+
+    currentTaskIdRef.current = nextTaskId;
+    setCurrentTaskId(nextTaskId);
+    pauseRequestedRef.current = false;
+    abortRequestedRef.current = false;
+    retryAutoResumeRef.current = false;
+    clearRetryTimeout();
+    setRunLogs(params.seedLogs);
+    setTurnRecords([]);
+    setConversationId(params.initialConversationId);
+    setCurrentTurnIndex(params.startIndex);
+    syncStartTurnInputToIndex(params.startIndex);
+    setRunEndReason(null);
+    setRunStatus('running');
+    setActiveTurnState('idle');
+    setRetryState(null);
+    setTaskNotice('');
+
+    const nextTask = buildPersistedTask(nextTaskId, createdAt, {
+      status: 'running',
+      reuseConversationOnManualStart: typeof params.reuseConversationOnManualStartValue === 'boolean' ? params.reuseConversationOnManualStartValue : pageStateRef.current.reuseConversationOnManualStart,
+      startTurnInput: params.startTurnInputValue ?? getStartTurnInputValue(params.startIndex, queueRef.current.length),
+      progress: {
+        conversationId: params.initialConversationId,
+        currentTurnIndex: params.startIndex,
+        effectiveMaxRounds: computeEffectiveMaxRounds(pageStateRef.current.maxRoundsInput, queueRef.current.length),
+        runEndReason: null,
+        runLogs: params.seedLogs,
+        turnRecords: [],
+        activeTurnState: 'idle',
+        retryState: null,
+      },
+    });
+    commitPersistedTasks([nextTask, ...persistedTasksRef.current.filter((task) => task.taskId !== nextTaskId)]);
+    void executeQueue(params.startIndex, params.initialConversationId, params.effectiveWatchDir);
+  };
+
   const resumeExecution = (startIndex: number, initialConversationId: string | null, effectiveWatchDir: string, logText: string) => {
     pauseRequestedRef.current = false;
     abortRequestedRef.current = false;
@@ -865,6 +973,7 @@ const RebuildChatPage: React.FC = () => {
     clearRetryTimeout();
     setTaskNotice('');
     setCurrentTurnIndex(startIndex);
+    syncStartTurnInputToIndex(startIndex);
     setActiveTurnState('idle');
     setRunEndReason(null);
     setRunStatus('running');
@@ -905,9 +1014,11 @@ const RebuildChatPage: React.FC = () => {
     setWatchDir(task.watchDir);
     setWatchExtensionsInput(task.watchExtensionsInput);
     setMaxRoundsInput(task.maxRoundsInput);
+    setStartTurnInput(task.startTurnInput);
     setIncludeHistoryContext(task.includeHistoryContext);
     setStopOnNoChanges(task.stopOnNoChanges);
     setSkipPermissions(task.skipPermissions);
+    setReuseConversationOnManualStart(task.reuseConversationOnManualStart);
     setConversationId(task.progress.conversationId);
     setCurrentTurnIndex(task.progress.currentTurnIndex);
     setRunEndReason(task.progress.runEndReason);
@@ -956,9 +1067,37 @@ const RebuildChatPage: React.FC = () => {
       return;
     }
 
-    appendRunLog('system', `已准备恢复任务，将继续第 ${getRebuildChatTaskResumeIndex(task) + 1} 轮。`);
+    const fallbackIndex = getRebuildChatTaskResumeIndex(task);
+    const resolved = resolveRequestedStart(fallbackIndex, task.startTurnInput);
+    if (!resolved) {
+      return;
+    }
+
+    if (resolved.isManualStartOverride) {
+      const initialConversationId = resolveManualStartConversationId({
+        currentConversationId: task.progress.conversationId,
+        fallbackIndex,
+        requestedStartIndex: resolved.requestedStartIndex,
+        reuseConversationOnManualStart: task.reuseConversationOnManualStart,
+      });
+
+      window.setTimeout(() => {
+        startRunWithFreshTask({
+          startIndex: resolved.requestedStartIndex,
+          initialConversationId,
+          effectiveWatchDir,
+          forceFork: true,
+          reuseConversationOnManualStartValue: task.reuseConversationOnManualStart,
+          seedLogs: [createRunLogEntry('system', `用户手动指定从第 ${resolved.requestedTurnNumber} 轮开始运行。`), createRunLogEntry('system', `会话复用：${task.reuseConversationOnManualStart ? '开启' : '关闭'}。`)],
+          startTurnInputValue: getStartTurnInputValue(resolved.requestedStartIndex, task.queueSnapshot.length),
+        });
+      }, 0);
+      return;
+    }
+
+    appendRunLog('system', `已准备恢复任务，将继续第 ${fallbackIndex + 1} 轮。`);
     window.setTimeout(() => {
-      resumeExecution(getRebuildChatTaskResumeIndex(task), task.progress.conversationId, effectiveWatchDir, `从持久化任务恢复，将从第 ${getRebuildChatTaskResumeIndex(task) + 1} 轮继续运行。`);
+      resumeExecution(fallbackIndex, task.progress.conversationId, effectiveWatchDir, `从持久化任务恢复，将从第 ${fallbackIndex + 1} 轮继续运行。`);
     }, 0);
   };
 
@@ -1137,46 +1276,33 @@ const RebuildChatPage: React.FC = () => {
         return;
       }
 
+      const resolved = resolveRequestedStart(0);
+      if (!resolved) {
+        return;
+      }
+
       const { canRun, effectiveWatchDir } = await resolveExecutionEnvironment(workDir, watchDir);
       if (!canRun) {
         return;
       }
 
-      const shouldForkTask = Boolean(currentPersistedTask && currentPersistedTask.status !== 'idle');
-      const startLog = createRunLogEntry('system', '开始新一轮运行。');
-      const nextTaskId = shouldForkTask || !currentTaskIdRef.current ? uuid() : currentTaskIdRef.current;
-      const createdAt = shouldForkTask || !currentPersistedTask ? Date.now() : currentPersistedTask.createdAt;
-
-      currentTaskIdRef.current = nextTaskId;
-      setCurrentTaskId(nextTaskId);
-      pauseRequestedRef.current = false;
-      abortRequestedRef.current = false;
-      retryAutoResumeRef.current = false;
-      clearRetryTimeout();
-      setRunLogs([startLog]);
-      setTurnRecords([]);
-      setConversationId(null);
-      setCurrentTurnIndex(0);
-      setRunEndReason(null);
-      setRunStatus('running');
-      setActiveTurnState('idle');
-      setRetryState(null);
-      setTaskNotice('');
-      const nextTask = buildPersistedTask(nextTaskId, createdAt, {
-        status: 'running',
-        progress: {
-          conversationId: null,
-          currentTurnIndex: 0,
-          effectiveMaxRounds,
-          runEndReason: null,
-          runLogs: [startLog],
-          turnRecords: [],
-          activeTurnState: 'idle',
-          retryState: null,
-        },
+      const initialConversationId = resolveManualStartConversationId({
+        currentConversationId: pageStateRef.current.conversationId,
+        fallbackIndex: resolved.fallbackIndex,
+        requestedStartIndex: resolved.requestedStartIndex,
+        reuseConversationOnManualStart: pageStateRef.current.reuseConversationOnManualStart,
       });
-      commitPersistedTasks([nextTask, ...persistedTasksRef.current.filter((task) => task.taskId !== nextTaskId)]);
-      void executeQueue(0, null, effectiveWatchDir);
+      const seedLogs = resolved.isManualStartOverride ? [createRunLogEntry('system', `用户手动指定从第 ${resolved.requestedTurnNumber} 轮开始运行。`), createRunLogEntry('system', `会话复用：${pageStateRef.current.reuseConversationOnManualStart ? '开启' : '关闭'}。`)] : [createRunLogEntry('system', '开始新一轮运行。')];
+
+      startRunWithFreshTask({
+        startIndex: resolved.requestedStartIndex,
+        initialConversationId: resolved.isManualStartOverride ? initialConversationId : null,
+        effectiveWatchDir,
+        forceFork: resolved.isManualStartOverride,
+        reuseConversationOnManualStartValue: pageStateRef.current.reuseConversationOnManualStart,
+        seedLogs,
+        startTurnInputValue: getStartTurnInputValue(resolved.requestedStartIndex, queueRef.current.length),
+      });
     })();
   };
 
@@ -1191,8 +1317,33 @@ const RebuildChatPage: React.FC = () => {
   const handleResume = () => {
     void (async () => {
       if (runStatus !== 'paused') return;
+      const resolved = resolveRequestedStart(currentTurnIndex);
+      if (!resolved) {
+        return;
+      }
+
       const { canRun, effectiveWatchDir } = await resolveExecutionEnvironment(workDir, watchDir);
       if (!canRun) {
+        return;
+      }
+
+      if (resolved.isManualStartOverride) {
+        const initialConversationId = resolveManualStartConversationId({
+          currentConversationId: conversationId,
+          fallbackIndex: resolved.fallbackIndex,
+          requestedStartIndex: resolved.requestedStartIndex,
+          reuseConversationOnManualStart,
+        });
+
+        startRunWithFreshTask({
+          startIndex: resolved.requestedStartIndex,
+          initialConversationId,
+          effectiveWatchDir,
+          forceFork: true,
+          reuseConversationOnManualStartValue: reuseConversationOnManualStart,
+          seedLogs: [createRunLogEntry('system', `用户手动指定从第 ${resolved.requestedTurnNumber} 轮开始运行。`), createRunLogEntry('system', `会话复用：${reuseConversationOnManualStart ? '开启' : '关闭'}。`)],
+          startTurnInputValue: getStartTurnInputValue(resolved.requestedStartIndex, queueRef.current.length),
+        });
         return;
       }
 
@@ -1225,6 +1376,26 @@ const RebuildChatPage: React.FC = () => {
       appendRunLog('system', `中止进程时出错：${getRebuildChatRuntimeDriver().formatRuntimeError(error)}`);
     }
   };
+
+  const primaryActionFallbackIndex = runStatus === 'paused' ? currentTurnIndex : 0;
+  const primaryActionLabel = runStatus === 'paused' ? '继续' : '开始';
+  const startTurnPreviewText = useMemo(() => {
+    if (!queue.length) {
+      return '';
+    }
+
+    const resolved = resolveRequestedStartIndex({
+      fallbackIndex: primaryActionFallbackIndex,
+      queueLength: queue.length,
+      startTurnInput,
+    });
+
+    if (!resolved.ok || !resolved.isManualStartOverride) {
+      return '';
+    }
+
+    return `本次点击“${primaryActionLabel}”将从第 ${resolved.requestedTurnNumber} 轮启动。`;
+  }, [currentTurnIndex, primaryActionFallbackIndex, primaryActionLabel, queue.length, runStatus, startTurnInput]);
 
   const retrySummaryText = runStatus === 'waiting_retry' && retryState ? (retryState.retryAt === null ? `当前轮因额度限制暂停，按固定间隔 ${formatRetryDelay(retryState.retryDelayMs)} 自动重试。` : `当前轮因额度限制暂停，将在 ${formatRetryClock(retryState.retryAt)} 自动重试，剩余约 ${formatRetryRemaining(retryState.retryAt, retryClockNow)}。`) : '';
 
@@ -1393,6 +1564,11 @@ const RebuildChatPage: React.FC = () => {
                     <Text style={{ display: 'block', marginBottom: 8 }}>最大轮数</Text>
                     <Input value={maxRoundsInput} disabled={isRunLocked} placeholder='留空表示跑完整个队列' onChange={setMaxRoundsInput} />
                   </div>
+                  <div>
+                    <Text style={{ display: 'block', marginBottom: 8 }}>起始轮次</Text>
+                    <Input data-testid='run-start-turn-input' value={startTurnInput} disabled={isRunLocked} placeholder='例如 46，表示从编辑区第 46 条开始' onChange={setStartTurnInput} />
+                    <div className={styles.roleHint}>这里对应编辑区顺序编号，1 表示第 1 条。</div>
+                  </div>
                 </div>
 
                 <div className={styles.toggleGrid}>
@@ -1410,6 +1586,14 @@ const RebuildChatPage: React.FC = () => {
                       <div className={styles.roleHint}>如果本轮前后目录快照没有新增 / 修改 / 删除，就结束运行。</div>
                     </div>
                     <Switch checked={stopOnNoChanges} disabled={isRunLocked} onChange={(checked) => setStopOnNoChanges(checked)} />
+                  </div>
+
+                  <div className={styles.toggleRow}>
+                    <div>
+                      <div className={styles.toggleTitle}>手动改起点时沿用当前会话</div>
+                      <div className={styles.roleHint}>关闭时会新开 agy 会话；开启时会沿用当前 conversationId 继续发指定轮次。</div>
+                    </div>
+                    <Switch data-testid='run-reuse-conversation-switch' checked={reuseConversationOnManualStart} disabled={isRunLocked} onChange={(checked) => setReuseConversationOnManualStart(checked)} />
                   </div>
 
                   <div className={styles.toggleRow}>
@@ -1548,6 +1732,7 @@ const RebuildChatPage: React.FC = () => {
                 <div className={styles.pathBox} data-testid='effective-max-rounds-box'>
                   有效最大轮数：{effectiveMaxRounds || 0}
                 </div>
+                {startTurnPreviewText ? <div className={styles.pathBox}>{startTurnPreviewText}</div> : null}
 
                 <div className={styles.logPanel} data-testid='run-log-panel'>
                   {runLogs.length ? (

@@ -26,6 +26,16 @@ const samplePromptFile = JSON.stringify({
   },
 });
 
+const largeSamplePromptFile = JSON.stringify({
+  chunkedPrompt: {
+    chunks: Array.from({ length: 50 }, (_, index) => ({
+      text: `task ${index + 1}`,
+      role: 'user',
+      tokenCount: 10,
+    })),
+  },
+});
+
 const ensureCompiledAssets = () => {
   const requiredFiles = [path.join(rendererRoot, 'main_window', 'index.js'), path.join(mainEntry)];
   for (const filePath of requiredFiles) {
@@ -237,6 +247,41 @@ const installFakeRuntime = async (page, mode) => {
       return;
     }
 
+    if (currentMode === 'manual-start-flow') {
+      window.__REBUILDCHAT_RUNTIME_OVERRIDE__ = {
+        snapshotDirectory: async () => ({
+          stub: { path: 'stub', size: 1, lastModified: Date.now() },
+        }),
+        compareDirectorySnapshots: () => ({ created: ['summary.md'], updated: [], deleted: [] }),
+        startAgyPrintTurn: (() => {
+          let callIndex = 0;
+
+          return async (options) => {
+            const current = callIndex++;
+            const firstPromptLine = (options.prompt || '').split('\n')[0] || 'EMPTY';
+            const receivedConversationId = options.conversationId ?? null;
+
+            return {
+              id: `manual-${current + 1}`,
+              promise: new Promise((resolve) => {
+                setTimeout(() => {
+                  resolve({
+                    output: `${receivedConversationId ? 'WITH_CONV' : 'NO_CONV'}|${firstPromptLine}`,
+                    conversationId: receivedConversationId || 'conv-manual-1',
+                    exitCode: 0,
+                    logFilePath: 'stub.log',
+                    rawLog: 'stub',
+                  });
+                }, 250);
+              }),
+              abort: async () => {},
+            };
+          };
+        })(),
+      };
+      return;
+    }
+
     window.__REBUILDCHAT_RUNTIME_OVERRIDE__ = {
       snapshotDirectory: async () => ({
         stub: { path: 'stub', size: 1, lastModified: Date.now() },
@@ -287,6 +332,7 @@ const installFakeRuntime = async (page, mode) => {
 
 const seedPage = async (page, options = {}) => {
   const existingDir = workspaceRoot.replace(/\\/g, '/');
+  const expectedQueueLength = Number(options.expectedQueueLength ?? (options.rawContent === largeSamplePromptFile ? 50 : 3));
   await page.evaluate(({ rawContent, existingDir: nextDir }) => {
     window.__REBUILDCHAT_FILE_PICKER_OVERRIDE__ = {
       filePath: 'D:/fixtures/sample.json',
@@ -294,12 +340,14 @@ const seedPage = async (page, options = {}) => {
       workDir: nextDir,
       watchDir: nextDir,
     };
-  }, { rawContent: samplePromptFile, existingDir });
+  }, { rawContent: options.rawContent ?? samplePromptFile, existingDir });
 
   await page.getByTestId('pick-json-file').click();
   await page.evaluate(({ nextDir, runOptions }) => {
     window.__REBUILDCHAT_TEST_API__?.setRunConfig({
       maxRoundsInput: runOptions.maxRoundsInput ?? '3',
+      reuseConversationOnManualStart: runOptions.reuseConversationOnManualStart ?? false,
+      startTurnInput: runOptions.startTurnInput ?? '1',
       stopOnNoChanges: runOptions.stopOnNoChanges ?? true,
       watchDir: nextDir,
       workDir: nextDir,
@@ -309,10 +357,12 @@ const seedPage = async (page, options = {}) => {
   await waitForPageState(
     page,
     (state) =>
-      state.queueLength === 3 &&
+      state.queueLength === expectedQueueLength &&
       state.workDir === existingDir &&
       state.watchDir === existingDir &&
-      state.effectiveMaxRounds === Number(options.maxRoundsInput ?? '3'),
+      state.effectiveMaxRounds === Number(options.maxRoundsInput ?? '3') &&
+      state.startTurnInput === String(options.startTurnInput ?? '1') &&
+      state.reuseConversationOnManualStart === Boolean(options.reuseConversationOnManualStart ?? false),
     15000,
     'seeded prompt file and directories'
   );
@@ -382,6 +432,30 @@ const main = async () => {
     await assertText(page.getByTestId('run-end-reason-value'), '达到最大轮数', 'quota retry end reason');
     await page.evaluate(() => window.__REBUILDCHAT_TEST_API__?.clearPersistedTasks());
 
+    await installFakeRuntime(page, 'manual-start-flow');
+    await seedPage(page, {
+      rawContent: largeSamplePromptFile,
+      maxRoundsInput: '46',
+      startTurnInput: '46',
+      stopOnNoChanges: false,
+    });
+    console.log('[smoke] manual start scenario seeded');
+
+    await page.getByTestId('run-start').click();
+    await waitForPageState(
+      page,
+      (state) => state.runStatus === 'completed' && state.runEndReason === 'max_rounds' && state.turnRecordCount === 1,
+      15000,
+      'manual start completion'
+    );
+
+    const manualStartTurnText = await page.getByTestId('turn-record-card').first().innerText();
+    if (!manualStartTurnText.includes('第 46 轮') || !manualStartTurnText.includes('第 46 条') || !manualStartTurnText.includes('NO_CONV|第 46 条')) {
+      throw new Error(`Expected manual start turn record to begin from 46, got: ${manualStartTurnText}`);
+    }
+
+    await page.evaluate(() => window.__REBUILDCHAT_TEST_API__?.clearPersistedTasks());
+
     await installFakeRuntime(page, 'resume-flow');
     await seedPage(page);
     console.log('[smoke] resume scenario seeded');
@@ -445,6 +519,35 @@ const main = async () => {
 
     await page.getByTestId('task-delete-button').first().click();
     await waitForPageState(page, (state) => state.persistedTaskCount === 0, 15000, 'task deletion');
+
+    await installFakeRuntime(page, 'manual-start-flow');
+    await seedPage(page, { maxRoundsInput: '3', stopOnNoChanges: false });
+    console.log('[smoke] manual continue scenario seeded');
+    await page.getByTestId('run-start').click();
+    await waitForPageState(page, (state) => state.runStatus === 'running', 15000, 'running state before manual continue pause');
+    await page.getByTestId('run-pause').click();
+    await waitForPageState(page, (state) => state.runStatus === 'paused' && state.currentTurnIndex === 1, 10000, 'paused state before manual continue');
+    await page.evaluate(() => {
+      window.__REBUILDCHAT_TEST_API__?.setRunConfig({
+        startTurnInput: '3',
+        reuseConversationOnManualStart: false,
+      });
+    });
+    await waitForPageState(page, (state) => state.startTurnInput === '3' && state.reuseConversationOnManualStart === false, 10000, 'manual continue config applied');
+    await page.getByTestId('run-resume').click();
+    await waitForPageState(
+      page,
+      (state) => state.runStatus === 'completed' && state.runEndReason === 'all_sent' && state.persistedTaskCount === 2 && state.turnRecordCount === 1,
+      15000,
+      'manual continue fork completion'
+    );
+
+    const manualContinueText = await page.getByTestId('turn-record-card').first().innerText();
+    if (!manualContinueText.includes('第 3 轮') || !manualContinueText.includes('第 3 条') || !manualContinueText.includes('NO_CONV|第 3 条')) {
+      throw new Error(`Expected manual continue turn record to fork from turn 3, got: ${manualContinueText}`);
+    }
+
+    await page.evaluate(() => window.__REBUILDCHAT_TEST_API__?.clearPersistedTasks());
 
     await installFakeRuntime(page, 'abort-flow');
     await page.getByTestId('run-start').click();

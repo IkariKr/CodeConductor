@@ -1,5 +1,6 @@
 import { hasFileChanges, type FileChangeSummary } from './fileChangeTracker';
 import type { QuotaRetryDirective } from './quotaRetryParser';
+import type { RebuildChatRetryPhase } from './persistedTask';
 
 export type RunStatus = 'idle' | 'running' | 'paused' | 'stopping' | 'waiting_retry' | 'completed' | 'failed';
 export type RunEndReason = 'all_sent' | 'max_rounds' | 'no_output' | 'aborted' | 'failed' | null;
@@ -31,8 +32,12 @@ export interface RebuildChatExecuteTurnResult {
   conversationId: string | null;
   exitCode: number | null;
   fileChanges: FileChangeSummary;
+  interruptStatus: 'paused' | null;
   output: string;
+  phase: RebuildChatRetryPhase;
   retryDirective: QuotaRetryDirective | null;
+  skipTurnRecord: boolean;
+  startedNewConversation: boolean;
 }
 
 export interface RebuildChatExecuteTurnParams {
@@ -167,38 +172,40 @@ export const executeRebuildChatRun = async (options: ExecuteRebuildChatRunOption
 
       const wasAborted = options.control.isAbortRequested();
       if (wasAborted) {
-        options.onTurnComplete?.({
-          conversationId,
-          prompt,
-          queueItem: item,
-          result,
-          turnIndex: index,
-          turnNumber,
-          turnStatus: 'aborted',
-          wasAborted: true,
-        });
-        options.onTurnRecord?.({
-          turnNumber,
-          role: item.role,
-          prompt,
-          output: result.output,
-          status: 'aborted',
-          conversationId,
-          fileChanges: result.fileChanges,
-        });
-        options.onLog?.('output', `第 ${turnNumber} 轮输出：${result.output || '(空输出)'}`);
+        if (!result.skipTurnRecord) {
+          options.onTurnComplete?.({
+            conversationId,
+            prompt,
+            queueItem: item,
+            result,
+            turnIndex: index,
+            turnNumber,
+            turnStatus: 'aborted',
+            wasAborted: true,
+          });
+          options.onTurnRecord?.({
+            turnNumber,
+            role: item.role,
+            prompt,
+            output: result.output,
+            status: 'aborted',
+            conversationId,
+            fileChanges: result.fileChanges,
+          });
+          options.onLog?.('output', `第 ${turnNumber} 轮输出：${result.output || '(空输出)'}`);
+        }
         return {
           conversationId,
           endReason: 'aborted',
-          nextTurnIndex: turnNumber,
+          nextTurnIndex: result.skipTurnRecord ? index : turnNumber,
           retryDirective: null,
           status: 'completed',
         };
       }
 
       if (result.retryDirective?.reason === 'quota') {
-        options.onLog?.('output', `第 ${turnNumber} 轮输出：${result.output || '(空输出)'}`);
-        options.onLog?.('system', `第 ${turnNumber} 轮触发额度限制，等待后会重试当前轮。`);
+        options.onLog?.('output', `${result.phase === 'start_prompt' ? '起始 prompt' : `第 ${turnNumber} 轮`}输出：${result.output || '(空输出)'}`);
+        options.onLog?.('system', result.phase === 'start_prompt' ? `第 ${turnNumber} 轮前置起始 prompt 触发额度限制，等待后会重试起始 prompt。` : `第 ${turnNumber} 轮触发额度限制，等待后会重试当前轮。`);
         return {
           conversationId,
           endReason: null,
@@ -208,47 +215,59 @@ export const executeRebuildChatRun = async (options: ExecuteRebuildChatRunOption
         };
       }
 
+      if (result.interruptStatus === 'paused') {
+        return {
+          conversationId,
+          endReason: null,
+          nextTurnIndex: index,
+          retryDirective: null,
+          status: 'paused',
+        };
+      }
+
       const turnStatus: TurnStatus = result.exitCode === 0 ? 'completed' : 'failed';
-      options.onTurnComplete?.({
-        conversationId,
-        prompt,
-        queueItem: item,
-        result,
-        turnIndex: index,
-        turnNumber,
-        turnStatus,
-        wasAborted,
-      });
+      if (!result.skipTurnRecord) {
+        options.onTurnComplete?.({
+          conversationId,
+          prompt,
+          queueItem: item,
+          result,
+          turnIndex: index,
+          turnNumber,
+          turnStatus,
+          wasAborted,
+        });
 
-      options.onTurnRecord?.({
-        turnNumber,
-        role: item.role,
-        prompt,
-        output: result.output,
-        status: turnStatus,
-        conversationId,
-        fileChanges: result.fileChanges,
-      });
+        options.onTurnRecord?.({
+          turnNumber,
+          role: item.role,
+          prompt,
+          output: result.output,
+          status: turnStatus,
+          conversationId,
+          fileChanges: result.fileChanges,
+        });
 
-      options.onLog?.('output', `第 ${turnNumber} 轮输出：${result.output || '(空输出)'}`);
-      options.onLog?.('system', `第 ${turnNumber} 轮文件变化：${summarizeFileChanges(result.fileChanges)}`);
+        options.onLog?.('output', `第 ${turnNumber} 轮输出：${result.output || '(空输出)'}`);
+        options.onLog?.('system', `第 ${turnNumber} 轮文件变化：${summarizeFileChanges(result.fileChanges)}`);
+      }
 
       if (wasAborted) {
         return {
           conversationId,
           endReason: 'aborted',
-          nextTurnIndex: turnNumber,
+          nextTurnIndex: result.skipTurnRecord ? index : turnNumber,
           retryDirective: null,
           status: 'completed',
         };
       }
 
       if (result.exitCode !== 0) {
-        options.onLog?.('system', `第 ${turnNumber} 轮失败，退出码：${result.exitCode ?? 'null'}。`);
+        options.onLog?.('system', result.phase === 'start_prompt' ? `第 ${turnNumber} 轮前置起始 prompt 失败，退出码：${result.exitCode ?? 'null'}。` : `第 ${turnNumber} 轮失败，退出码：${result.exitCode ?? 'null'}。`);
         return {
           conversationId,
           endReason: 'failed',
-          nextTurnIndex: turnNumber,
+          nextTurnIndex: result.skipTurnRecord ? index : turnNumber,
           retryDirective: null,
           status: 'failed',
         };

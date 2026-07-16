@@ -41,16 +41,24 @@ const createTask = (overrides: Partial<RebuildChatPersistedTask> = {}): RebuildC
   watchExtensionsInput: '.md',
   includeHistoryContext: false,
   maxRoundsInput: '2',
+  executionErrorRetryCountInput: '1',
+  executionTimeoutMinutesInput: '10',
+  conversationResetEveryNRoundsInput: '3',
+  startPromptInput: 'warm up',
   startTurnInput: '2',
   stopOnNoChanges: true,
   skipPermissions: false,
   reuseConversationOnManualStart: false,
   progress: {
     conversationId: 'conv-1',
+    currentConversationRoundCount: 1,
     currentTurnIndex: 1,
     effectiveMaxRounds: 2,
+    hasSentStartPromptInCurrentConversation: true,
+    pendingStartPromptTrigger: null,
     runEndReason: null,
     runLogs: [],
+    startPromptRecords: [],
     turnRecords: [],
     activeTurnState: 'idle',
   },
@@ -119,12 +127,30 @@ describe('rebuildChatPersistedTask', () => {
 
   test('fills manual start defaults for legacy task records', () => {
     const legacyTask = createTask({ taskId: 'legacy' }) as unknown as Record<string, unknown>;
+    delete legacyTask.executionErrorRetryCountInput;
+    delete legacyTask.executionTimeoutMinutesInput;
+    delete legacyTask.conversationResetEveryNRoundsInput;
+    delete legacyTask.startPromptInput;
     delete legacyTask.startTurnInput;
     delete legacyTask.reuseConversationOnManualStart;
 
     const normalized = normalizeRebuildChatTasks([legacyTask]);
+    expect(normalized[0]?.executionErrorRetryCountInput).toBe('1');
+    expect(normalized[0]?.executionTimeoutMinutesInput).toBe('10');
+    expect(normalized[0]?.conversationResetEveryNRoundsInput).toBe('');
+    expect(normalized[0]?.startPromptInput).toBe('');
     expect(normalized[0]?.startTurnInput).toBe('2');
     expect(normalized[0]?.reuseConversationOnManualStart).toBe(false);
+  });
+
+  test('fills legacy conversation round count default from progress', () => {
+    const legacyTask = createTask({ taskId: 'legacy-conv' }) as unknown as Record<string, unknown>;
+    if (legacyTask.progress && typeof legacyTask.progress === 'object') {
+      delete (legacyTask.progress as Record<string, unknown>).currentConversationRoundCount;
+    }
+
+    const normalized = normalizeRebuildChatTasks([legacyTask]);
+    expect(normalized[0]?.progress.currentConversationRoundCount).toBe(1);
   });
 
   test('keeps valid retry state during normalization', () => {
@@ -136,6 +162,7 @@ describe('rebuildChatPersistedTask', () => {
           ...createTask().progress,
           retryState: {
             reason: 'quota',
+            phase: 'turn',
             retryAt: 123,
             retryDelayMs: 5000,
             retryAttemptCount: 2,
@@ -148,5 +175,19 @@ describe('rebuildChatPersistedTask', () => {
     ]);
 
     expect(normalized[0]?.progress.retryState?.retryAttemptCount).toBe(2);
+  });
+
+  test('fills legacy start prompt state defaults during normalization', () => {
+    const legacyTask = createTask({ taskId: 'legacy-start-prompt' }) as unknown as Record<string, unknown>;
+    if (legacyTask.progress && typeof legacyTask.progress === 'object') {
+      delete (legacyTask.progress as Record<string, unknown>).hasSentStartPromptInCurrentConversation;
+      delete (legacyTask.progress as Record<string, unknown>).pendingStartPromptTrigger;
+      delete (legacyTask.progress as Record<string, unknown>).startPromptRecords;
+    }
+
+    const normalized = normalizeRebuildChatTasks([legacyTask]);
+    expect(normalized[0]?.progress.hasSentStartPromptInCurrentConversation).toBe(true);
+    expect(normalized[0]?.progress.pendingStartPromptTrigger).toBeNull();
+    expect(normalized[0]?.progress.startPromptRecords).toEqual([]);
   });
 });

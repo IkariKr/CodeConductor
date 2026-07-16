@@ -1,13 +1,19 @@
+import { getDefaultConversationRoundCount } from './conversationReset';
 import type { EditablePromptQueueItem } from './editablePromptQueue';
+import { DEFAULT_EXECUTION_ERROR_RETRY_COUNT_INPUT } from './executionErrorRetry';
+import { DEFAULT_EXECUTION_TIMEOUT_MINUTES_INPUT } from './executionTimeout';
 import { getStartTurnInputValue } from './manualStart';
 import type { QuotaRetryDirectiveSource } from './quotaRetryParser';
 import type { RunEndReason, RunLogKind, RunStatus, RebuildChatTurnRecord } from './rebuildChatExecutor';
 
 export type RebuildChatPersistedTaskStatus = 'idle' | 'running' | 'paused' | 'stopping' | 'waiting_retry' | 'completed' | 'failed' | 'aborted';
 export type RebuildChatActiveTurnState = 'idle' | 'running' | 'completed_not_advanced';
+export type RebuildChatStartPromptTrigger = 'task_start' | 'conversation_reset';
+export type RebuildChatRetryPhase = 'start_prompt' | 'turn';
 
 export interface RebuildChatPersistedRetryState {
   reason: 'quota';
+  phase: RebuildChatRetryPhase;
   retryAt: number | null;
   retryDelayMs: number;
   retryAttemptCount: number;
@@ -27,6 +33,17 @@ export interface RebuildChatPersistedTurnRecord extends RebuildChatTurnRecord {
   id: string;
 }
 
+export interface RebuildChatPersistedStartPromptRecord {
+  id: string;
+  trigger: RebuildChatStartPromptTrigger;
+  targetTurnIndex: number;
+  prompt: string;
+  output: string;
+  status: 'completed' | 'failed' | 'aborted';
+  conversationId: string | null;
+  timestamp: string;
+}
+
 export interface RebuildChatPersistedTaskSource {
   filePath: string;
   rawContent: string;
@@ -36,10 +53,14 @@ export interface RebuildChatPersistedTaskSource {
 
 export interface RebuildChatPersistedTaskProgress {
   conversationId: string | null;
+  currentConversationRoundCount: number;
   currentTurnIndex: number;
   effectiveMaxRounds: number;
+  hasSentStartPromptInCurrentConversation: boolean;
+  pendingStartPromptTrigger: RebuildChatStartPromptTrigger | null;
   runEndReason: RunEndReason;
   runLogs: RebuildChatPersistedLogEntry[];
+  startPromptRecords: RebuildChatPersistedStartPromptRecord[];
   turnRecords: RebuildChatPersistedTurnRecord[];
   activeTurnState: RebuildChatActiveTurnState;
   retryState?: RebuildChatPersistedRetryState | null;
@@ -57,6 +78,10 @@ export interface RebuildChatPersistedTask {
   watchExtensionsInput: string;
   includeHistoryContext: boolean;
   maxRoundsInput: string;
+  executionErrorRetryCountInput: string;
+  executionTimeoutMinutesInput: string;
+  conversationResetEveryNRoundsInput: string;
+  startPromptInput: string;
   startTurnInput: string;
   stopOnNoChanges: boolean;
   skipPermissions: boolean;
@@ -124,7 +149,7 @@ export const normalizeRebuildChatTasks = (value: unknown): RebuildChatPersistedT
 
       const candidate = item as Partial<RebuildChatPersistedTask>;
       const retryState = candidate.progress?.retryState;
-      const hasValidRetryState = typeof retryState === 'undefined' || retryState === null || (typeof retryState === 'object' && retryState.reason === 'quota' && (typeof retryState.retryAt === 'number' || retryState.retryAt === null) && typeof retryState.retryDelayMs === 'number' && typeof retryState.retryAttemptCount === 'number' && typeof retryState.resumeTurnIndex === 'number' && typeof retryState.lastMatchedMessage === 'string' && (retryState.source === 'output' || retryState.source === 'rawLog'));
+      const hasValidRetryState = typeof retryState === 'undefined' || retryState === null || (typeof retryState === 'object' && retryState.reason === 'quota' && (retryState.phase === 'start_prompt' || retryState.phase === 'turn' || typeof retryState.phase === 'undefined') && (typeof retryState.retryAt === 'number' || retryState.retryAt === null) && typeof retryState.retryDelayMs === 'number' && typeof retryState.retryAttemptCount === 'number' && typeof retryState.resumeTurnIndex === 'number' && typeof retryState.lastMatchedMessage === 'string' && (retryState.source === 'output' || retryState.source === 'rawLog'));
       const isValid =
         typeof candidate.taskId === 'string' &&
         typeof candidate.createdAt === 'number' &&
@@ -141,12 +166,20 @@ export const normalizeRebuildChatTasks = (value: unknown): RebuildChatPersistedT
         typeof candidate.watchExtensionsInput === 'string' &&
         typeof candidate.includeHistoryContext === 'boolean' &&
         typeof candidate.maxRoundsInput === 'string' &&
+        (typeof candidate.executionErrorRetryCountInput === 'string' || typeof candidate.executionErrorRetryCountInput === 'undefined') &&
+        (typeof candidate.executionTimeoutMinutesInput === 'string' || typeof candidate.executionTimeoutMinutesInput === 'undefined') &&
+        (typeof candidate.conversationResetEveryNRoundsInput === 'string' || typeof candidate.conversationResetEveryNRoundsInput === 'undefined') &&
+        (typeof candidate.startPromptInput === 'string' || typeof candidate.startPromptInput === 'undefined') &&
         typeof candidate.stopOnNoChanges === 'boolean' &&
         typeof candidate.skipPermissions === 'boolean' &&
         Boolean(candidate.progress) &&
+        (typeof candidate.progress?.currentConversationRoundCount === 'number' || typeof candidate.progress?.currentConversationRoundCount === 'undefined') &&
         typeof candidate.progress?.currentTurnIndex === 'number' &&
         typeof candidate.progress?.effectiveMaxRounds === 'number' &&
+        (typeof candidate.progress?.hasSentStartPromptInCurrentConversation === 'boolean' || typeof candidate.progress?.hasSentStartPromptInCurrentConversation === 'undefined') &&
+        (candidate.progress?.pendingStartPromptTrigger === 'task_start' || candidate.progress?.pendingStartPromptTrigger === 'conversation_reset' || typeof candidate.progress?.pendingStartPromptTrigger === 'undefined' || candidate.progress?.pendingStartPromptTrigger === null) &&
         Array.isArray(candidate.progress?.runLogs) &&
+        (Array.isArray(candidate.progress?.startPromptRecords) || typeof candidate.progress?.startPromptRecords === 'undefined') &&
         Array.isArray(candidate.progress?.turnRecords) &&
         typeof candidate.progress?.activeTurnState === 'string' &&
         hasValidRetryState;
@@ -161,8 +194,26 @@ export const normalizeRebuildChatTasks = (value: unknown): RebuildChatPersistedT
       return [
         {
           ...(candidate as RebuildChatPersistedTask),
+          executionErrorRetryCountInput: typeof candidate.executionErrorRetryCountInput === 'string' ? candidate.executionErrorRetryCountInput : DEFAULT_EXECUTION_ERROR_RETRY_COUNT_INPUT,
+          executionTimeoutMinutesInput: typeof candidate.executionTimeoutMinutesInput === 'string' ? candidate.executionTimeoutMinutesInput : DEFAULT_EXECUTION_TIMEOUT_MINUTES_INPUT,
+          conversationResetEveryNRoundsInput: typeof candidate.conversationResetEveryNRoundsInput === 'string' ? candidate.conversationResetEveryNRoundsInput : '',
+          startPromptInput: typeof candidate.startPromptInput === 'string' ? candidate.startPromptInput : '',
           startTurnInput: typeof candidate.startTurnInput === 'string' ? candidate.startTurnInput : getStartTurnInputValue(currentTurnIndex, queueLength),
           reuseConversationOnManualStart: typeof candidate.reuseConversationOnManualStart === 'boolean' ? candidate.reuseConversationOnManualStart : false,
+          progress: {
+            ...(candidate.progress as RebuildChatPersistedTaskProgress),
+            currentConversationRoundCount: typeof candidate.progress?.currentConversationRoundCount === 'number' ? candidate.progress.currentConversationRoundCount : getDefaultConversationRoundCount(candidate.progress?.conversationId ?? null, currentTurnIndex),
+            hasSentStartPromptInCurrentConversation: typeof candidate.progress?.hasSentStartPromptInCurrentConversation === 'boolean' ? candidate.progress.hasSentStartPromptInCurrentConversation : true,
+            pendingStartPromptTrigger: candidate.progress?.pendingStartPromptTrigger === 'task_start' || candidate.progress?.pendingStartPromptTrigger === 'conversation_reset' ? candidate.progress.pendingStartPromptTrigger : null,
+            startPromptRecords: Array.isArray(candidate.progress?.startPromptRecords) ? candidate.progress.startPromptRecords : [],
+            retryState:
+              candidate.progress?.retryState && typeof candidate.progress.retryState === 'object'
+                ? {
+                    ...candidate.progress.retryState,
+                    phase: candidate.progress.retryState.phase === 'start_prompt' ? 'start_prompt' : 'turn',
+                  }
+                : (candidate.progress?.retryState ?? null),
+          },
         },
       ];
     })

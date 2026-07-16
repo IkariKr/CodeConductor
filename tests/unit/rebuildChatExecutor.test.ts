@@ -38,7 +38,11 @@ const createTurnResult = (output: string, overrides: Partial<RebuildChatExecuteT
       updated: ['file.md'],
       deleted: [],
     },
+    interruptStatus: null,
+    phase: 'turn',
     retryDirective: null,
+    skipTurnRecord: false,
+    startedNewConversation: false,
     ...overrides,
   };
 };
@@ -207,6 +211,72 @@ describe('rebuildChatExecutor', () => {
         source: 'output',
       },
       status: 'waiting_retry',
+    });
+    expect(records).toEqual([]);
+  });
+
+  test('does not create a turn record when start prompt fails before the main turn', async () => {
+    const { control } = createControl();
+    const records: Array<{ status: string }> = [];
+
+    const result = await executeRebuildChatRun({
+      queue: [{ role: 'user', text: 'first' }],
+      startIndex: 0,
+      initialConversationId: null,
+      includeHistoryContext: false,
+      maxRounds: 1,
+      stopOnNoChanges: false,
+      control,
+      executeTurn: async () =>
+        createTurnResult('START_PROMPT_FAIL', {
+          exitCode: 1,
+          phase: 'start_prompt',
+          skipTurnRecord: true,
+        }),
+      onTurnRecord: (record) => {
+        records.push({ status: record.status });
+      },
+    });
+
+    expect(result).toEqual({
+      conversationId: 'conv-1',
+      endReason: 'failed',
+      nextTurnIndex: 0,
+      retryDirective: null,
+      status: 'failed',
+    });
+    expect(records).toEqual([]);
+  });
+
+  test('pauses without recording the turn when execution requests an immediate pause', async () => {
+    const { control } = createControl();
+    const records: Array<{ status: string }> = [];
+
+    const result = await executeRebuildChatRun({
+      queue: [{ role: 'user', text: 'first' }],
+      startIndex: 0,
+      initialConversationId: 'conv-1',
+      includeHistoryContext: false,
+      maxRounds: 1,
+      stopOnNoChanges: false,
+      control,
+      executeTurn: async () =>
+        createTurnResult('TIMEOUT_PAUSED', {
+          exitCode: null,
+          interruptStatus: 'paused',
+          skipTurnRecord: true,
+        }),
+      onTurnRecord: (record) => {
+        records.push({ status: record.status });
+      },
+    });
+
+    expect(result).toEqual({
+      conversationId: 'conv-1',
+      endReason: null,
+      nextTurnIndex: 0,
+      retryDirective: null,
+      status: 'paused',
     });
     expect(records).toEqual([]);
   });

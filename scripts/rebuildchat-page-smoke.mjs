@@ -131,7 +131,7 @@ const waitForPageState = async (page, predicate, timeoutMs, label) => {
 
 const installFakeRuntime = async (page, mode) => {
   await page.evaluate((currentMode) => {
-    if (currentMode === 'quota-wait-flow') {
+      if (currentMode === 'quota-wait-flow') {
       window.__REBUILDCHAT_RUNTIME_OVERRIDE__ = {
         snapshotDirectory: async () => ({
           stub: { path: 'stub', size: 1, lastModified: Date.now() },
@@ -178,6 +178,235 @@ const installFakeRuntime = async (page, mode) => {
                     rawLog: 'stub',
                   });
                 }, 300);
+              }),
+              abort: async () => {},
+            };
+          };
+        })(),
+      };
+      return;
+    }
+
+    if (currentMode === 'timeout-turn-flow') {
+      window.__REBUILDCHAT_RUNTIME_OVERRIDE__ = {
+        snapshotDirectory: async () => ({
+          stub: { path: 'stub', size: 1, lastModified: Date.now() },
+        }),
+        compareDirectorySnapshots: () => ({ created: ['summary.md'], updated: [], deleted: [] }),
+        startAgyPrintTurn: (() => {
+          let callIndex = 0;
+
+          return async () => {
+            const current = callIndex++;
+            let resolvePromise;
+            const promise = new Promise((resolve) => {
+              resolvePromise = resolve;
+            });
+
+            return {
+              id: `timeout-turn-${current + 1}`,
+              promise,
+              abort: async () => {
+                resolvePromise({
+                  output: '',
+                  conversationId: 'conv-timeout-turn',
+                  exitCode: null,
+                  logFilePath: 'stub.log',
+                  rawLog: 'stub',
+                });
+              },
+            };
+          };
+        })(),
+      };
+      return;
+    }
+
+    if (currentMode === 'timeout-start-prompt-flow') {
+      window.__REBUILDCHAT_RUNTIME_OVERRIDE__ = {
+        snapshotDirectory: async () => ({
+          stub: { path: 'stub', size: 1, lastModified: Date.now() },
+        }),
+        compareDirectorySnapshots: () => ({ created: ['summary.md'], updated: [], deleted: [] }),
+        startAgyPrintTurn: (() => {
+          let callIndex = 0;
+
+          return async () => {
+            const current = callIndex++;
+            let resolvePromise;
+            const promise = new Promise((resolve) => {
+              resolvePromise = resolve;
+            });
+
+            return {
+              id: `timeout-start-prompt-${current + 1}`,
+              promise,
+              abort: async () => {
+                resolvePromise({
+                  output: '',
+                  conversationId: current === 0 ? null : 'conv-timeout-start',
+                  exitCode: null,
+                  logFilePath: 'stub.log',
+                  rawLog: 'stub',
+                });
+              },
+            };
+          };
+        })(),
+      };
+      return;
+    }
+
+    if (currentMode === 'error-turn-retry-success-flow') {
+      window.__REBUILDCHAT_RUNTIME_OVERRIDE__ = {
+        snapshotDirectory: async () => ({
+          stub: { path: 'stub', size: 1, lastModified: Date.now() },
+        }),
+        compareDirectorySnapshots: () => ({ created: ['summary.md'], updated: [], deleted: [] }),
+        startAgyPrintTurn: (() => {
+          let callIndex = 0;
+
+          return async (options) => {
+            const current = callIndex++;
+            const firstPromptLine = (options.prompt || '').split('\n')[0] || 'EMPTY';
+            const receivedConversationId = options.conversationId ?? null;
+
+            return {
+              id: `error-turn-success-${current + 1}`,
+              promise: new Promise((resolve) => {
+                setTimeout(() => {
+                  if (current === 0) {
+                    resolve({
+                      output: 'Error: Agent execution terminated due to error.',
+                      conversationId: receivedConversationId || 'conv-error-turn',
+                      exitCode: 1,
+                      logFilePath: 'stub.log',
+                      rawLog: 'Error: Agent execution terminated due to error.',
+                    });
+                    return;
+                  }
+
+                  resolve({
+                    output: `${receivedConversationId ? 'WITH_CONV' : 'NO_CONV'}|${firstPromptLine}`,
+                    conversationId: receivedConversationId || 'conv-error-turn',
+                    exitCode: 0,
+                    logFilePath: 'stub.log',
+                    rawLog: 'stub',
+                  });
+                }, 250);
+              }),
+              abort: async () => {},
+            };
+          };
+        })(),
+      };
+      return;
+    }
+
+    if (currentMode === 'error-turn-retry-paused-flow') {
+      window.__REBUILDCHAT_RUNTIME_OVERRIDE__ = {
+        snapshotDirectory: async () => ({
+          stub: { path: 'stub', size: 1, lastModified: Date.now() },
+        }),
+        compareDirectorySnapshots: () => ({ created: ['summary.md'], updated: [], deleted: [] }),
+        startAgyPrintTurn: (() => {
+          let callIndex = 0;
+
+          return async (options) => {
+            const current = callIndex++;
+            const receivedConversationId = options.conversationId ?? null;
+
+            return {
+              id: `error-turn-paused-${current + 1}`,
+              promise: new Promise((resolve) => {
+                setTimeout(() => {
+                  resolve({
+                    output: 'Error: Agent execution terminated due to error.',
+                    conversationId: receivedConversationId || 'conv-error-turn-paused',
+                    exitCode: 1,
+                    logFilePath: 'stub.log',
+                    rawLog: 'Error: Agent execution terminated due to error.',
+                  });
+                }, 250);
+              }),
+              abort: async () => {},
+            };
+          };
+        })(),
+      };
+      return;
+    }
+
+    if (currentMode === 'error-start-prompt-retry-success-flow') {
+      window.__REBUILDCHAT_RUNTIME_OVERRIDE__ = {
+        snapshotDirectory: async () => ({
+          stub: { path: 'stub', size: 1, lastModified: Date.now() },
+        }),
+        compareDirectorySnapshots: () => ({ created: ['summary.md'], updated: [], deleted: [] }),
+        startAgyPrintTurn: (() => {
+          let callIndex = 0;
+
+          return async (options) => {
+            const current = callIndex++;
+            const firstPromptLine = (options.prompt || '').split('\n')[0] || 'EMPTY';
+            const receivedConversationId = options.conversationId ?? null;
+
+            return {
+              id: `error-start-success-${current + 1}`,
+              promise: new Promise((resolve) => {
+                setTimeout(() => {
+                  if (current === 0) {
+                    resolve({
+                      output: 'Error: Agent execution terminated due to error.',
+                      conversationId: 'conv-error-start-success',
+                      exitCode: 1,
+                      logFilePath: 'stub.log',
+                      rawLog: 'Error: Agent execution terminated due to error.',
+                    });
+                    return;
+                  }
+
+                  resolve({
+                    output: `${receivedConversationId ? 'WITH_CONV' : 'NO_CONV'}|${firstPromptLine}`,
+                    conversationId: receivedConversationId || 'conv-error-start-success',
+                    exitCode: 0,
+                    logFilePath: 'stub.log',
+                    rawLog: 'stub',
+                  });
+                }, 250);
+              }),
+              abort: async () => {},
+            };
+          };
+        })(),
+      };
+      return;
+    }
+
+    if (currentMode === 'error-start-prompt-retry-paused-flow') {
+      window.__REBUILDCHAT_RUNTIME_OVERRIDE__ = {
+        snapshotDirectory: async () => ({
+          stub: { path: 'stub', size: 1, lastModified: Date.now() },
+        }),
+        compareDirectorySnapshots: () => ({ created: ['summary.md'], updated: [], deleted: [] }),
+        startAgyPrintTurn: (() => {
+          let callIndex = 0;
+
+          return async () => {
+            const current = callIndex++;
+
+            return {
+              id: `error-start-paused-${current + 1}`,
+              promise: new Promise((resolve) => {
+                setTimeout(() => {
+                  resolve({
+                    output: 'Error: Agent execution terminated due to error.',
+                    conversationId: 'conv-error-start-paused',
+                    exitCode: 1,
+                    logFilePath: 'stub.log',
+                    rawLog: 'Error: Agent execution terminated due to error.',
+                  });
+                }, 250);
               }),
               abort: async () => {},
             };
@@ -272,6 +501,52 @@ const installFakeRuntime = async (page, mode) => {
                     logFilePath: 'stub.log',
                     rawLog: 'stub',
                   });
+                }, 500);
+              }),
+              abort: async () => {},
+            };
+          };
+        })(),
+      };
+      return;
+    }
+
+    if (currentMode === 'start-prompt-quota-flow') {
+      window.__REBUILDCHAT_RUNTIME_OVERRIDE__ = {
+        snapshotDirectory: async () => ({
+          stub: { path: 'stub', size: 1, lastModified: Date.now() },
+        }),
+        compareDirectorySnapshots: () => ({ created: ['summary.md'], updated: [], deleted: [] }),
+        startAgyPrintTurn: (() => {
+          let callIndex = 0;
+
+          return async (options) => {
+            const current = callIndex++;
+            const firstPromptLine = (options.prompt || '').split('\n')[0] || 'EMPTY';
+            const receivedConversationId = options.conversationId ?? null;
+
+            return {
+              id: `start-prompt-quota-${current + 1}`,
+              promise: new Promise((resolve) => {
+                setTimeout(() => {
+                  if (current === 0) {
+                    resolve({
+                      output: 'Error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 0s.',
+                      conversationId: 'conv-start-quota-1',
+                      exitCode: 1,
+                      logFilePath: 'stub.log',
+                      rawLog: 'Error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 0s.',
+                    });
+                    return;
+                  }
+
+                  resolve({
+                    output: `${receivedConversationId ? 'WITH_CONV' : 'NO_CONV'}|${firstPromptLine}`,
+                    conversationId: receivedConversationId || `conv-start-quota-${current + 1}`,
+                    exitCode: 0,
+                    logFilePath: 'stub.log',
+                    rawLog: 'stub',
+                  });
                 }, 250);
               }),
               abort: async () => {},
@@ -333,6 +608,9 @@ const installFakeRuntime = async (page, mode) => {
 const seedPage = async (page, options = {}) => {
   const existingDir = workspaceRoot.replace(/\\/g, '/');
   const expectedQueueLength = Number(options.expectedQueueLength ?? (options.rawContent === largeSamplePromptFile ? 50 : 3));
+  await page.evaluate((timeoutOverrideMs) => {
+    window.__REBUILDCHAT_TIMEOUT_OVERRIDE_MS__ = typeof timeoutOverrideMs === 'number' ? timeoutOverrideMs : undefined;
+  }, options.timeoutOverrideMs);
   await page.evaluate(({ rawContent, existingDir: nextDir }) => {
     window.__REBUILDCHAT_FILE_PICKER_OVERRIDE__ = {
       filePath: 'D:/fixtures/sample.json',
@@ -345,8 +623,12 @@ const seedPage = async (page, options = {}) => {
   await page.getByTestId('pick-json-file').click();
   await page.evaluate(({ nextDir, runOptions }) => {
     window.__REBUILDCHAT_TEST_API__?.setRunConfig({
+      conversationResetEveryNRoundsInput: runOptions.conversationResetEveryNRoundsInput ?? '',
+      executionErrorRetryCountInput: runOptions.executionErrorRetryCountInput ?? '1',
+      executionTimeoutMinutesInput: runOptions.executionTimeoutMinutesInput ?? '10',
       maxRoundsInput: runOptions.maxRoundsInput ?? '3',
       reuseConversationOnManualStart: runOptions.reuseConversationOnManualStart ?? false,
+      startPromptInput: runOptions.startPromptInput ?? '',
       startTurnInput: runOptions.startTurnInput ?? '1',
       stopOnNoChanges: runOptions.stopOnNoChanges ?? true,
       watchDir: nextDir,
@@ -360,7 +642,11 @@ const seedPage = async (page, options = {}) => {
       state.queueLength === expectedQueueLength &&
       state.workDir === existingDir &&
       state.watchDir === existingDir &&
+      state.conversationResetEveryNRoundsInput === String(options.conversationResetEveryNRoundsInput ?? '') &&
+      state.executionErrorRetryCountInput === String(options.executionErrorRetryCountInput ?? '1') &&
+      state.executionTimeoutMinutesInput === String(options.executionTimeoutMinutesInput ?? '10') &&
       state.effectiveMaxRounds === Number(options.maxRoundsInput ?? '3') &&
+      state.startPromptInput === String(options.startPromptInput ?? '') &&
       state.startTurnInput === String(options.startTurnInput ?? '1') &&
       state.reuseConversationOnManualStart === Boolean(options.reuseConversationOnManualStart ?? false),
     15000,
@@ -432,6 +718,180 @@ const main = async () => {
     await assertText(page.getByTestId('run-end-reason-value'), '达到最大轮数', 'quota retry end reason');
     await page.evaluate(() => window.__REBUILDCHAT_TEST_API__?.clearPersistedTasks());
 
+    await installFakeRuntime(page, 'timeout-start-prompt-flow');
+    await seedPage(page, {
+      maxRoundsInput: '1',
+      executionTimeoutMinutesInput: '1',
+      startPromptInput: 'WARMUP',
+      stopOnNoChanges: false,
+      timeoutOverrideMs: 50,
+    });
+    console.log('[smoke] start prompt timeout scenario seeded');
+
+    await page.getByTestId('run-start').click();
+    await waitForPageState(
+      page,
+      (state) => state.runStatus === 'paused' && state.currentTurnIndex === 0 && state.startPromptRecordCount === 0 && state.turnRecordCount === 0,
+      15000,
+      'start prompt timeout paused'
+    );
+    console.log('[smoke] start prompt timeout scenario paused');
+    await page.evaluate(() => window.__REBUILDCHAT_TEST_API__?.clearPersistedTasks());
+
+    await installFakeRuntime(page, 'timeout-turn-flow');
+    await seedPage(page, {
+      maxRoundsInput: '1',
+      executionTimeoutMinutesInput: '1',
+      stopOnNoChanges: false,
+      timeoutOverrideMs: 50,
+    });
+    console.log('[smoke] turn timeout scenario seeded');
+
+    await page.getByTestId('run-start').click();
+    await waitForPageState(
+      page,
+      (state) => state.runStatus === 'paused' && state.currentTurnIndex === 0 && state.turnRecordCount === 0,
+      15000,
+      'turn timeout paused'
+    );
+    console.log('[smoke] turn timeout scenario paused');
+    await page.evaluate(() => window.__REBUILDCHAT_TEST_API__?.clearPersistedTasks());
+
+    await installFakeRuntime(page, 'error-turn-retry-success-flow');
+    await seedPage(page, {
+      maxRoundsInput: '1',
+      executionErrorRetryCountInput: '1',
+      stopOnNoChanges: false,
+    });
+    console.log('[smoke] turn error retry success scenario seeded');
+
+    await page.getByTestId('run-start').click();
+    await waitForPageState(
+      page,
+      (state) => state.runStatus === 'completed' && state.runEndReason === 'max_rounds' && state.turnRecordCount === 1,
+      15000,
+      'turn error retry success completion'
+    );
+
+    const turnErrorSuccessText = await page.getByTestId('turn-record-card').first().innerText();
+    if (!turnErrorSuccessText.includes('NO_CONV|第 1 条')) {
+      throw new Error(`Expected recovered turn output after ordinary error retry, got: ${turnErrorSuccessText}`);
+    }
+
+    await page.evaluate(() => window.__REBUILDCHAT_TEST_API__?.clearPersistedTasks());
+
+    await installFakeRuntime(page, 'error-turn-retry-paused-flow');
+    await seedPage(page, {
+      maxRoundsInput: '1',
+      executionErrorRetryCountInput: '1',
+      stopOnNoChanges: false,
+    });
+    console.log('[smoke] turn error retry paused scenario seeded');
+
+    await page.getByTestId('run-start').click();
+    await waitForPageState(
+      page,
+      (state) => state.runStatus === 'paused' && state.currentTurnIndex === 0 && state.turnRecordCount === 0,
+      15000,
+      'turn error retry paused'
+    );
+
+    await page.evaluate(() => window.__REBUILDCHAT_TEST_API__?.clearPersistedTasks());
+
+    await installFakeRuntime(page, 'error-turn-retry-paused-flow');
+    await seedPage(page, {
+      maxRoundsInput: '1',
+      executionErrorRetryCountInput: '0',
+      stopOnNoChanges: false,
+    });
+    console.log('[smoke] turn error immediate pause scenario seeded');
+
+    await page.getByTestId('run-start').click();
+    await waitForPageState(
+      page,
+      (state) => state.runStatus === 'paused' && state.currentTurnIndex === 0 && state.turnRecordCount === 0,
+      15000,
+      'turn error immediate pause'
+    );
+
+    await page.evaluate(() => window.__REBUILDCHAT_TEST_API__?.clearPersistedTasks());
+
+    await installFakeRuntime(page, 'error-start-prompt-retry-success-flow');
+    await seedPage(page, {
+      maxRoundsInput: '1',
+      executionErrorRetryCountInput: '1',
+      startPromptInput: 'WARMUP',
+      stopOnNoChanges: false,
+    });
+    console.log('[smoke] start prompt error retry success scenario seeded');
+
+    await page.getByTestId('run-start').click();
+    await waitForPageState(
+      page,
+      (state) =>
+        state.runStatus === 'completed' &&
+        state.runEndReason === 'max_rounds' &&
+        state.startPromptRecordCount === 1 &&
+        state.turnRecordCount === 1,
+      15000,
+      'start prompt error retry success completion'
+    );
+
+    await page.evaluate(() => window.__REBUILDCHAT_TEST_API__?.clearPersistedTasks());
+
+    await installFakeRuntime(page, 'error-start-prompt-retry-paused-flow');
+    await seedPage(page, {
+      maxRoundsInput: '1',
+      executionErrorRetryCountInput: '1',
+      startPromptInput: 'WARMUP',
+      stopOnNoChanges: false,
+    });
+    console.log('[smoke] start prompt error retry paused scenario seeded');
+
+    await page.getByTestId('run-start').click();
+    await waitForPageState(
+      page,
+      (state) => state.runStatus === 'paused' && state.currentTurnIndex === 0 && state.startPromptRecordCount === 0 && state.turnRecordCount === 0,
+      15000,
+      'start prompt error retry paused'
+    );
+
+    await page.evaluate(() => window.__REBUILDCHAT_TEST_API__?.clearPersistedTasks());
+
+    await installFakeRuntime(page, 'start-prompt-quota-flow');
+    await seedPage(page, {
+      maxRoundsInput: '1',
+      startPromptInput: 'WARMUP',
+      stopOnNoChanges: false,
+    });
+    console.log('[smoke] start prompt quota scenario seeded');
+
+    await page.getByTestId('run-start').click();
+    await waitForPageState(
+      page,
+      (state) => state.runStatus === 'waiting_retry' && state.retryAttemptCount === 1 && state.startPromptRecordCount === 0 && state.turnRecordCount === 0,
+      15000,
+      'start prompt quota waiting state'
+    );
+    await waitForPageState(
+      page,
+      (state) =>
+        state.runStatus === 'completed' &&
+        state.runEndReason === 'max_rounds' &&
+        state.startPromptRecordCount === 1 &&
+        state.turnRecordCount === 1 &&
+        state.hasSentStartPromptInCurrentConversation === true,
+      25000,
+      'start prompt quota auto retry completion'
+    );
+
+    const startPromptQuotaText = await page.getByTestId('start-prompt-record-card').first().innerText();
+    if (!startPromptQuotaText.includes('WARMUP')) {
+      throw new Error(`Expected start prompt quota record to contain WARMUP, got: ${startPromptQuotaText}`);
+    }
+
+    await page.evaluate(() => window.__REBUILDCHAT_TEST_API__?.clearPersistedTasks());
+
     await installFakeRuntime(page, 'manual-start-flow');
     await seedPage(page, {
       rawContent: largeSamplePromptFile,
@@ -452,6 +912,35 @@ const main = async () => {
     const manualStartTurnText = await page.getByTestId('turn-record-card').first().innerText();
     if (!manualStartTurnText.includes('第 46 轮') || !manualStartTurnText.includes('第 46 条') || !manualStartTurnText.includes('NO_CONV|第 46 条')) {
       throw new Error(`Expected manual start turn record to begin from 46, got: ${manualStartTurnText}`);
+    }
+
+    await page.evaluate(() => window.__REBUILDCHAT_TEST_API__?.clearPersistedTasks());
+
+    await installFakeRuntime(page, 'manual-start-flow');
+    await seedPage(page, {
+      maxRoundsInput: '2',
+      conversationResetEveryNRoundsInput: '1',
+      startPromptInput: 'WARMUP',
+      stopOnNoChanges: false,
+    });
+    console.log('[smoke] conversation reset scenario seeded');
+
+    await page.getByTestId('run-start').click();
+    await waitForPageState(
+      page,
+      (state) => state.runStatus === 'completed' && state.runEndReason === 'max_rounds' && state.turnRecordCount === 2 && state.startPromptRecordCount === 2,
+      15000,
+      'conversation reset completion'
+    );
+
+    const resetTurnCards = await page.getByTestId('turn-record-card').allInnerTexts();
+    if (!resetTurnCards[0]?.includes('WITH_CONV|第 1 条') || !resetTurnCards[1]?.includes('WITH_CONV|第 2 条')) {
+      throw new Error(`Expected both turns to reuse the fresh conversation created by start prompt, got: ${JSON.stringify(resetTurnCards)}`);
+    }
+
+    const resetStartPromptCards = await page.getByTestId('start-prompt-record-card').allInnerTexts();
+    if (!resetStartPromptCards[0]?.includes('WARMUP') || !resetStartPromptCards[1]?.includes('WARMUP')) {
+      throw new Error(`Expected start prompt records before each reset turn, got: ${JSON.stringify(resetStartPromptCards)}`);
     }
 
     await page.evaluate(() => window.__REBUILDCHAT_TEST_API__?.clearPersistedTasks());

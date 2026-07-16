@@ -46,7 +46,7 @@ const createTask = (overrides: Partial<RebuildChatPersistedTask> = {}): RebuildC
   conversationResetEveryNRoundsInput: '3',
   startPromptInput: 'warm up',
   startTurnInput: '2',
-  stopOnNoChanges: true,
+  skipTurnOnNoOutput: true,
   skipPermissions: false,
   reuseConversationOnManualStart: false,
   progress: {
@@ -140,6 +140,7 @@ describe('rebuildChatPersistedTask', () => {
     expect(normalized[0]?.conversationResetEveryNRoundsInput).toBe('');
     expect(normalized[0]?.startPromptInput).toBe('');
     expect(normalized[0]?.startTurnInput).toBe('2');
+    expect(normalized[0]?.skipTurnOnNoOutput).toBe(true);
     expect(normalized[0]?.reuseConversationOnManualStart).toBe(false);
   });
 

@@ -416,6 +416,171 @@ const installFakeRuntime = async (page, mode) => {
       return;
     }
 
+    if (currentMode === 'no-output-retry-success-flow') {
+      window.__REBUILDCHAT_RUNTIME_OVERRIDE__ = {
+        snapshotDirectory: async () => ({
+          stub: { path: 'stub', size: 1, lastModified: Date.now() },
+        }),
+        compareDirectorySnapshots: (() => {
+          let compareIndex = 0;
+          const changes = [
+            { created: [], updated: [], deleted: [] },
+            { created: ['summary.md'], updated: [], deleted: [] },
+          ];
+
+          return () => {
+            const next = changes[Math.min(compareIndex, changes.length - 1)];
+            compareIndex += 1;
+            return next;
+          };
+        })(),
+        startAgyPrintTurn: (() => {
+          let callIndex = 0;
+
+          return async (options) => {
+            const current = callIndex++;
+            const firstPromptLine = (options.prompt || '').split('\n')[0] || 'EMPTY';
+            const receivedConversationId = options.conversationId ?? null;
+
+            return {
+              id: `no-output-success-${current + 1}`,
+              promise: new Promise((resolve) => {
+                setTimeout(() => {
+                  resolve({
+                    output: `${receivedConversationId ? 'WITH_CONV' : 'NO_CONV'}|${firstPromptLine}`,
+                    conversationId: receivedConversationId || 'conv-no-output-success',
+                    exitCode: 0,
+                    logFilePath: 'stub.log',
+                    rawLog: 'stub',
+                  });
+                }, 250);
+              }),
+              abort: async () => {},
+            };
+          };
+        })(),
+      };
+      return;
+    }
+
+    if (currentMode === 'no-output-retry-skip-flow') {
+      window.__REBUILDCHAT_RUNTIME_OVERRIDE__ = {
+        snapshotDirectory: async () => ({
+          stub: { path: 'stub', size: 1, lastModified: Date.now() },
+        }),
+        compareDirectorySnapshots: (() => {
+          let compareIndex = 0;
+          const changes = [
+            { created: [], updated: [], deleted: [] },
+            { created: [], updated: [], deleted: [] },
+            { created: ['summary.md'], updated: [], deleted: [] },
+          ];
+
+          return () => {
+            const next = changes[Math.min(compareIndex, changes.length - 1)];
+            compareIndex += 1;
+            return next;
+          };
+        })(),
+        startAgyPrintTurn: (() => {
+          let callIndex = 0;
+
+          return async (options) => {
+            const current = callIndex++;
+            const firstPromptLine = (options.prompt || '').split('\n')[0] || 'EMPTY';
+            const receivedConversationId = options.conversationId ?? null;
+
+            return {
+              id: `no-output-skip-${current + 1}`,
+              promise: new Promise((resolve) => {
+                setTimeout(() => {
+                  resolve({
+                    output: `${receivedConversationId ? 'WITH_CONV' : 'NO_CONV'}|${firstPromptLine}`,
+                    conversationId: receivedConversationId || 'conv-no-output-skip',
+                    exitCode: 0,
+                    logFilePath: 'stub.log',
+                    rawLog: 'stub',
+                  });
+                }, 250);
+              }),
+              abort: async () => {},
+            };
+          };
+        })(),
+      };
+      return;
+    }
+
+    if (currentMode === 'no-output-retry-pause-flow') {
+      window.__REBUILDCHAT_RUNTIME_OVERRIDE__ = {
+        snapshotDirectory: async () => ({
+          stub: { path: 'stub', size: 1, lastModified: Date.now() },
+        }),
+        compareDirectorySnapshots: () => ({ created: [], updated: [], deleted: [] }),
+        startAgyPrintTurn: (() => {
+          let callIndex = 0;
+
+          return async (options) => {
+            const current = callIndex++;
+            const firstPromptLine = (options.prompt || '').split('\n')[0] || 'EMPTY';
+            const receivedConversationId = options.conversationId ?? null;
+
+            return {
+              id: `no-output-pause-${current + 1}`,
+              promise: new Promise((resolve) => {
+                setTimeout(() => {
+                  resolve({
+                    output: `${receivedConversationId ? 'WITH_CONV' : 'NO_CONV'}|${firstPromptLine}`,
+                    conversationId: receivedConversationId || 'conv-no-output-pause',
+                    exitCode: 0,
+                    logFilePath: 'stub.log',
+                    rawLog: 'stub',
+                  });
+                }, 250);
+              }),
+              abort: async () => {},
+            };
+          };
+        })(),
+      };
+      return;
+    }
+
+    if (currentMode === 'no-output-retry-with-start-prompt-flow') {
+      window.__REBUILDCHAT_RUNTIME_OVERRIDE__ = {
+        snapshotDirectory: async () => ({
+          stub: { path: 'stub', size: 1, lastModified: Date.now() },
+        }),
+        compareDirectorySnapshots: () => ({ created: [], updated: [], deleted: [] }),
+        startAgyPrintTurn: (() => {
+          let callIndex = 0;
+
+          return async (options) => {
+            const current = callIndex++;
+            const firstPromptLine = (options.prompt || '').split('\n')[0] || 'EMPTY';
+            const receivedConversationId = options.conversationId ?? null;
+
+            return {
+              id: `no-output-start-prompt-${current + 1}`,
+              promise: new Promise((resolve) => {
+                setTimeout(() => {
+                  resolve({
+                    output: `${receivedConversationId ? 'WITH_CONV' : 'NO_CONV'}|${firstPromptLine}`,
+                    conversationId: receivedConversationId || `conv-no-output-start-${current + 1}`,
+                    exitCode: 0,
+                    logFilePath: 'stub.log',
+                    rawLog: 'stub',
+                  });
+                }, 250);
+              }),
+              abort: async () => {},
+            };
+          };
+        })(),
+      };
+      return;
+    }
+
     if (currentMode === 'resume-flow') {
       window.__REBUILDCHAT_RUNTIME_OVERRIDE__ = {
         snapshotDirectory: async () => ({
@@ -628,9 +793,9 @@ const seedPage = async (page, options = {}) => {
       executionTimeoutMinutesInput: runOptions.executionTimeoutMinutesInput ?? '10',
       maxRoundsInput: runOptions.maxRoundsInput ?? '3',
       reuseConversationOnManualStart: runOptions.reuseConversationOnManualStart ?? false,
+      skipTurnOnNoOutput: runOptions.skipTurnOnNoOutput ?? true,
       startPromptInput: runOptions.startPromptInput ?? '',
       startTurnInput: runOptions.startTurnInput ?? '1',
-      stopOnNoChanges: runOptions.stopOnNoChanges ?? true,
       watchDir: nextDir,
       workDir: nextDir,
     });
@@ -646,6 +811,7 @@ const seedPage = async (page, options = {}) => {
       state.executionErrorRetryCountInput === String(options.executionErrorRetryCountInput ?? '1') &&
       state.executionTimeoutMinutesInput === String(options.executionTimeoutMinutesInput ?? '10') &&
       state.effectiveMaxRounds === Number(options.maxRoundsInput ?? '3') &&
+      state.skipTurnOnNoOutput === Boolean(options.skipTurnOnNoOutput ?? true) &&
       state.startPromptInput === String(options.startPromptInput ?? '') &&
       state.startTurnInput === String(options.startTurnInput ?? '1') &&
       state.reuseConversationOnManualStart === Boolean(options.reuseConversationOnManualStart ?? false),
@@ -701,7 +867,7 @@ const main = async () => {
 
     await page.evaluate(() => window.__REBUILDCHAT_TEST_API__?.clearPersistedTasks());
     await installFakeRuntime(page, 'quota-wait-flow');
-    await seedPage(page, { maxRoundsInput: '1', stopOnNoChanges: false });
+    await seedPage(page, { maxRoundsInput: '1', skipTurnOnNoOutput: false });
     console.log('[smoke] quota scenario seeded');
 
     await page.getByTestId('run-start').click();
@@ -723,7 +889,7 @@ const main = async () => {
       maxRoundsInput: '1',
       executionTimeoutMinutesInput: '1',
       startPromptInput: 'WARMUP',
-      stopOnNoChanges: false,
+      skipTurnOnNoOutput: false,
       timeoutOverrideMs: 50,
     });
     console.log('[smoke] start prompt timeout scenario seeded');
@@ -742,7 +908,7 @@ const main = async () => {
     await seedPage(page, {
       maxRoundsInput: '1',
       executionTimeoutMinutesInput: '1',
-      stopOnNoChanges: false,
+      skipTurnOnNoOutput: false,
       timeoutOverrideMs: 50,
     });
     console.log('[smoke] turn timeout scenario seeded');
@@ -757,11 +923,100 @@ const main = async () => {
     console.log('[smoke] turn timeout scenario paused');
     await page.evaluate(() => window.__REBUILDCHAT_TEST_API__?.clearPersistedTasks());
 
+    await installFakeRuntime(page, 'no-output-retry-success-flow');
+    await seedPage(page, {
+      maxRoundsInput: '1',
+      skipTurnOnNoOutput: true,
+    });
+    console.log('[smoke] no output retry success scenario seeded');
+
+    await page.getByTestId('run-start').click();
+    await waitForPageState(
+      page,
+      (state) => state.runStatus === 'completed' && state.runEndReason === 'max_rounds' && state.turnRecordCount === 1,
+      15000,
+      'no output retry success completion'
+    );
+
+    const noOutputSuccessText = await page.getByTestId('turn-record-card').first().innerText();
+    if (!noOutputSuccessText.includes('completed') || !noOutputSuccessText.includes('NO_CONV|第 1 条')) {
+      throw new Error(`Expected no output retry success turn record, got: ${noOutputSuccessText}`);
+    }
+
+    await page.evaluate(() => window.__REBUILDCHAT_TEST_API__?.clearPersistedTasks());
+
+    await installFakeRuntime(page, 'no-output-retry-skip-flow');
+    await seedPage(page, {
+      maxRoundsInput: '2',
+      skipTurnOnNoOutput: true,
+    });
+    console.log('[smoke] no output retry skip scenario seeded');
+
+    await page.getByTestId('run-start').click();
+    await waitForPageState(
+      page,
+      (state) => state.runStatus === 'completed' && state.runEndReason === 'max_rounds' && state.turnRecordCount === 2 && state.currentTurnIndex === 2,
+      15000,
+      'no output retry skip completion'
+    );
+
+    const noOutputSkipCards = await page.getByTestId('turn-record-card').allInnerTexts();
+    if (!noOutputSkipCards[0]?.includes('skipped') || !noOutputSkipCards[1]?.includes('WITH_CONV|第 2 条')) {
+      throw new Error(`Expected skipped first turn and continued second turn after no output retry, got: ${JSON.stringify(noOutputSkipCards)}`);
+    }
+
+    await page.evaluate(() => window.__REBUILDCHAT_TEST_API__?.clearPersistedTasks());
+
+    await installFakeRuntime(page, 'no-output-retry-pause-flow');
+    await seedPage(page, {
+      maxRoundsInput: '1',
+      skipTurnOnNoOutput: false,
+    });
+    console.log('[smoke] no output retry pause scenario seeded');
+
+    await page.getByTestId('run-start').click();
+    await waitForPageState(
+      page,
+      (state) => state.runStatus === 'paused' && state.currentTurnIndex === 0 && state.turnRecordCount === 0,
+      15000,
+      'no output retry pause completion'
+    );
+
+    await page.evaluate(() => window.__REBUILDCHAT_TEST_API__?.clearPersistedTasks());
+
+    await installFakeRuntime(page, 'no-output-retry-with-start-prompt-flow');
+    await seedPage(page, {
+      maxRoundsInput: '1',
+      skipTurnOnNoOutput: true,
+      startPromptInput: 'WARMUP',
+    });
+    console.log('[smoke] no output retry with start prompt scenario seeded');
+
+    await page.getByTestId('run-start').click();
+    await waitForPageState(
+      page,
+      (state) =>
+        state.runStatus === 'completed' &&
+        state.runEndReason === 'max_rounds' &&
+        state.startPromptRecordCount === 2 &&
+        state.turnRecordCount === 1,
+      15000,
+      'no output retry with start prompt completion'
+    );
+
+    const noOutputStartPromptCards = await page.getByTestId('start-prompt-record-card').allInnerTexts();
+    const noOutputStartTurnText = await page.getByTestId('turn-record-card').first().innerText();
+    if (!noOutputStartPromptCards[0]?.includes('WARMUP') || !noOutputStartPromptCards[1]?.includes('WARMUP') || !noOutputStartTurnText.includes('skipped')) {
+      throw new Error(`Expected start prompt to replay before no output retry, got prompts=${JSON.stringify(noOutputStartPromptCards)} turn=${noOutputStartTurnText}`);
+    }
+
+    await page.evaluate(() => window.__REBUILDCHAT_TEST_API__?.clearPersistedTasks());
+
     await installFakeRuntime(page, 'error-turn-retry-success-flow');
     await seedPage(page, {
       maxRoundsInput: '1',
       executionErrorRetryCountInput: '1',
-      stopOnNoChanges: false,
+      skipTurnOnNoOutput: false,
     });
     console.log('[smoke] turn error retry success scenario seeded');
 
@@ -784,7 +1039,7 @@ const main = async () => {
     await seedPage(page, {
       maxRoundsInput: '1',
       executionErrorRetryCountInput: '1',
-      stopOnNoChanges: false,
+      skipTurnOnNoOutput: false,
     });
     console.log('[smoke] turn error retry paused scenario seeded');
 
@@ -802,7 +1057,7 @@ const main = async () => {
     await seedPage(page, {
       maxRoundsInput: '1',
       executionErrorRetryCountInput: '0',
-      stopOnNoChanges: false,
+      skipTurnOnNoOutput: false,
     });
     console.log('[smoke] turn error immediate pause scenario seeded');
 
@@ -821,7 +1076,7 @@ const main = async () => {
       maxRoundsInput: '1',
       executionErrorRetryCountInput: '1',
       startPromptInput: 'WARMUP',
-      stopOnNoChanges: false,
+      skipTurnOnNoOutput: false,
     });
     console.log('[smoke] start prompt error retry success scenario seeded');
 
@@ -844,7 +1099,7 @@ const main = async () => {
       maxRoundsInput: '1',
       executionErrorRetryCountInput: '1',
       startPromptInput: 'WARMUP',
-      stopOnNoChanges: false,
+      skipTurnOnNoOutput: false,
     });
     console.log('[smoke] start prompt error retry paused scenario seeded');
 
@@ -862,7 +1117,7 @@ const main = async () => {
     await seedPage(page, {
       maxRoundsInput: '1',
       startPromptInput: 'WARMUP',
-      stopOnNoChanges: false,
+      skipTurnOnNoOutput: false,
     });
     console.log('[smoke] start prompt quota scenario seeded');
 
@@ -897,7 +1152,7 @@ const main = async () => {
       rawContent: largeSamplePromptFile,
       maxRoundsInput: '46',
       startTurnInput: '46',
-      stopOnNoChanges: false,
+      skipTurnOnNoOutput: false,
     });
     console.log('[smoke] manual start scenario seeded');
 
@@ -921,7 +1176,7 @@ const main = async () => {
       maxRoundsInput: '2',
       conversationResetEveryNRoundsInput: '1',
       startPromptInput: 'WARMUP',
-      stopOnNoChanges: false,
+      skipTurnOnNoOutput: false,
     });
     console.log('[smoke] conversation reset scenario seeded');
 
@@ -1010,7 +1265,7 @@ const main = async () => {
     await waitForPageState(page, (state) => state.persistedTaskCount === 0, 15000, 'task deletion');
 
     await installFakeRuntime(page, 'manual-start-flow');
-    await seedPage(page, { maxRoundsInput: '3', stopOnNoChanges: false });
+    await seedPage(page, { maxRoundsInput: '3', skipTurnOnNoOutput: false });
     console.log('[smoke] manual continue scenario seeded');
     await page.getByTestId('run-start').click();
     await waitForPageState(page, (state) => state.runStatus === 'running', 15000, 'running state before manual continue pause');

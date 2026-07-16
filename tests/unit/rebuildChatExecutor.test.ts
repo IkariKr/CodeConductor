@@ -61,7 +61,6 @@ describe('rebuildChatExecutor', () => {
       initialConversationId: null,
       includeHistoryContext: false,
       maxRounds: 2,
-      stopOnNoChanges: false,
       control,
       executeTurn: async ({ prompt }) => {
         prompts.push(prompt);
@@ -91,7 +90,6 @@ describe('rebuildChatExecutor', () => {
       initialConversationId: null,
       includeHistoryContext: false,
       maxRounds: 2,
-      stopOnNoChanges: false,
       control,
       executeTurn: async ({ turnNumber }) => {
         if (turnNumber === 1) {
@@ -120,7 +118,6 @@ describe('rebuildChatExecutor', () => {
       initialConversationId: null,
       includeHistoryContext: false,
       maxRounds: 1,
-      stopOnNoChanges: false,
       control,
       executeTurn: async () => {
         requestAbort();
@@ -141,8 +138,9 @@ describe('rebuildChatExecutor', () => {
     expect(records).toEqual([{ status: 'aborted' }]);
   });
 
-  test('stops on no_output when file changes are empty', async () => {
+  test('records skipped turn and advances when execution marks the turn as skipped', async () => {
     const { control } = createControl();
+    const records: Array<{ status: string }> = [];
 
     const result = await executeRebuildChatRun({
       queue: [{ role: 'user', text: 'first' }],
@@ -150,25 +148,29 @@ describe('rebuildChatExecutor', () => {
       initialConversationId: null,
       includeHistoryContext: false,
       maxRounds: 1,
-      stopOnNoChanges: true,
       control,
       executeTurn: async () =>
-        createTurnResult('NO_CHANGE', {
+        createTurnResult('SKIPPED_NO_OUTPUT', {
           fileChanges: {
             created: [],
             updated: [],
             deleted: [],
           },
+          turnStatusOverride: 'skipped',
         }),
+      onTurnRecord: (record) => {
+        records.push({ status: record.status });
+      },
     });
 
     expect(result).toEqual({
       conversationId: 'conv-1',
-      endReason: 'no_output',
+      endReason: 'all_sent',
       nextTurnIndex: 1,
       retryDirective: null,
       status: 'completed',
     });
+    expect(records).toEqual([{ status: 'skipped' }]);
   });
 
   test('waits and retries current turn when quota directive is returned', async () => {
@@ -181,7 +183,6 @@ describe('rebuildChatExecutor', () => {
       initialConversationId: 'conv-1',
       includeHistoryContext: false,
       maxRounds: 1,
-      stopOnNoChanges: false,
       control,
       executeTurn: async () =>
         createTurnResult('quota', {
@@ -225,7 +226,6 @@ describe('rebuildChatExecutor', () => {
       initialConversationId: null,
       includeHistoryContext: false,
       maxRounds: 1,
-      stopOnNoChanges: false,
       control,
       executeTurn: async () =>
         createTurnResult('START_PROMPT_FAIL', {
@@ -258,7 +258,6 @@ describe('rebuildChatExecutor', () => {
       initialConversationId: 'conv-1',
       includeHistoryContext: false,
       maxRounds: 1,
-      stopOnNoChanges: false,
       control,
       executeTurn: async () =>
         createTurnResult('TIMEOUT_PAUSED', {

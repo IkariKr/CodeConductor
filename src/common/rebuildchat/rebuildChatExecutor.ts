@@ -1,11 +1,11 @@
-import { hasFileChanges, type FileChangeSummary } from './fileChangeTracker';
+import type { FileChangeSummary } from './fileChangeTracker';
 import type { QuotaRetryDirective } from './quotaRetryParser';
 import type { RebuildChatRetryPhase } from './persistedTask';
 
 export type RunStatus = 'idle' | 'running' | 'paused' | 'stopping' | 'waiting_retry' | 'completed' | 'failed';
 export type RunEndReason = 'all_sent' | 'max_rounds' | 'no_output' | 'aborted' | 'failed' | null;
 export type RunLogKind = 'system' | 'turn' | 'output';
-export type TurnStatus = 'completed' | 'failed' | 'aborted';
+export type TurnStatus = 'completed' | 'failed' | 'aborted' | 'skipped';
 
 export interface RebuildChatQueueEntry {
   role: string;
@@ -38,6 +38,7 @@ export interface RebuildChatExecuteTurnResult {
   retryDirective: QuotaRetryDirective | null;
   skipTurnRecord: boolean;
   startedNewConversation: boolean;
+  turnStatusOverride?: TurnStatus | null;
 }
 
 export interface RebuildChatExecuteTurnParams {
@@ -82,7 +83,6 @@ export interface ExecuteRebuildChatRunOptions {
   onTurnRecord?: (record: RebuildChatTurnRecord) => void;
   queue: RebuildChatQueueEntry[];
   startIndex?: number;
-  stopOnNoChanges: boolean;
 }
 
 export interface ExecuteRebuildChatRunResult {
@@ -225,7 +225,7 @@ export const executeRebuildChatRun = async (options: ExecuteRebuildChatRunOption
         };
       }
 
-      const turnStatus: TurnStatus = result.exitCode === 0 ? 'completed' : 'failed';
+      const turnStatus: TurnStatus = result.turnStatusOverride ?? (result.exitCode === 0 ? 'completed' : 'failed');
       if (!result.skipTurnRecord) {
         options.onTurnComplete?.({
           conversationId,
@@ -270,17 +270,6 @@ export const executeRebuildChatRun = async (options: ExecuteRebuildChatRunOption
           nextTurnIndex: result.skipTurnRecord ? index : turnNumber,
           retryDirective: null,
           status: 'failed',
-        };
-      }
-
-      if (options.stopOnNoChanges && !hasFileChanges(result.fileChanges)) {
-        options.onLog?.('system', `第 ${turnNumber} 轮未检测到文件产出，按规则自动停止。`);
-        return {
-          conversationId,
-          endReason: 'no_output',
-          nextTurnIndex: turnNumber,
-          retryDirective: null,
-          status: 'completed',
         };
       }
 

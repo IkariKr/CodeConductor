@@ -6,7 +6,7 @@ import { DEFAULT_EXECUTION_TIMEOUT_MINUTES_INPUT, getExecutionTimeoutMs, getExec
 import { getStartTurnInputValue, resolveManualStartConversationId, resolveRequestedStartIndex } from '@/common/rebuildchat/manualStart';
 import { canResumeRebuildChatTask, getPersistedTaskStatus, getRebuildChatTaskResumeIndex, sortRebuildChatTasks, type RebuildChatActiveTurnState, type RebuildChatPersistedLogEntry, type RebuildChatPersistedRetryState, type RebuildChatPersistedStartPromptRecord, type RebuildChatPersistedTask, type RebuildChatPersistedTaskStatus, type RebuildChatPersistedTurnRecord, type RebuildChatRetryPhase, type RebuildChatStartPromptTrigger } from '@/common/rebuildchat/persistedTask';
 import { parsePromptFile, type ParsePromptFileResult } from '@/common/rebuildchat/promptFileParser';
-import { executeRebuildChatRun, summarizeFileChanges, type RunEndReason, type RunLogKind, type RunStatus } from '@/common/rebuildchat/rebuildChatExecutor';
+import { executeRebuildChatRun, summarizeFileChanges, type RebuildChatExecuteTurnResult, type RunEndReason, type RunLogKind, type RunStatus } from '@/common/rebuildchat/rebuildChatExecutor';
 import { parseQuotaRetry } from '@/common/rebuildchat/quotaRetryParser';
 import { parseError, uuid } from '@/common/utils';
 import { Button, Card, Checkbox, Empty, Input, Message, Space, Switch, Tag, Typography } from '@arco-design/web-react';
@@ -41,10 +41,10 @@ interface RebuildChatRunConfigPayload {
   includeHistoryContext?: boolean;
   maxRoundsInput?: string;
   reuseConversationOnManualStart?: boolean;
+  skipTurnOnNoOutput?: boolean;
   skipPermissions?: boolean;
   startPromptInput?: string;
   startTurnInput?: string;
-  stopOnNoChanges?: boolean;
   watchDir?: string;
   watchExtensionsInput?: string;
   workDir?: string;
@@ -90,6 +90,7 @@ interface RebuildChatTestApi {
     runEndReason: RunEndReason;
     runLogCount: number;
     runStatus: RunStatus;
+    skipTurnOnNoOutput: boolean;
     startPromptInput: string;
     startPromptRecordCount: number;
     startTurnInput: string;
@@ -297,7 +298,7 @@ const RebuildChatPage: React.FC = () => {
   const [startPromptInput, setStartPromptInput] = useState('');
   const [startTurnInput, setStartTurnInput] = useState('1');
   const [includeHistoryContext, setIncludeHistoryContext] = useState(false);
-  const [stopOnNoChanges, setStopOnNoChanges] = useState(true);
+  const [skipTurnOnNoOutput, setSkipTurnOnNoOutput] = useState(true);
   const [skipPermissions, setSkipPermissions] = useState(false);
   const [reuseConversationOnManualStart, setReuseConversationOnManualStart] = useState(false);
 
@@ -352,7 +353,7 @@ const RebuildChatPage: React.FC = () => {
     startPromptInput: '',
     startTurnInput: '1',
     includeHistoryContext: false,
-    stopOnNoChanges: true,
+    skipTurnOnNoOutput: true,
     skipPermissions: false,
     reuseConversationOnManualStart: false,
     runStatus: 'idle' as RunStatus,
@@ -405,7 +406,7 @@ const RebuildChatPage: React.FC = () => {
       conversationResetEveryNRoundsInput: state.conversationResetEveryNRoundsInput,
       startPromptInput: state.startPromptInput,
       startTurnInput: state.startTurnInput,
-      stopOnNoChanges: state.stopOnNoChanges,
+      skipTurnOnNoOutput: state.skipTurnOnNoOutput,
       skipPermissions: state.skipPermissions,
       reuseConversationOnManualStart: state.reuseConversationOnManualStart,
       progress: {
@@ -509,7 +510,7 @@ const RebuildChatPage: React.FC = () => {
             conversationResetEveryNRoundsInput,
             startPromptInput,
             startTurnInput,
-            stopOnNoChanges,
+            skipTurnOnNoOutput,
             skipPermissions,
             reuseConversationOnManualStart,
             progress: {
@@ -571,7 +572,7 @@ const RebuildChatPage: React.FC = () => {
       startPromptInput,
       startTurnInput,
       includeHistoryContext,
-      stopOnNoChanges,
+      skipTurnOnNoOutput,
       skipPermissions,
       reuseConversationOnManualStart,
       runStatus,
@@ -588,7 +589,7 @@ const RebuildChatPage: React.FC = () => {
       retryState,
     };
     // eslint-disable-next-line max-len
-  }, [activeTurnState, conversationId, conversationResetEveryNRoundsInput, currentConversationRoundCount, currentTurnIndex, executionErrorRetryCountInput, executionTimeoutMinutesInput, excludeThought, filePath, hasSentStartPromptInCurrentConversation, includeHistoryContext, maxRoundsInput, pendingStartPromptTrigger, queue, rawContent, retryState, reuseConversationOnManualStart, runEndReason, runLogs, runStatus, selectedRoles, skipPermissions, startPromptInput, startPromptRecords, startTurnInput, stopOnNoChanges, turnRecords, watchDir, watchExtensionsInput, workDir]);
+  }, [activeTurnState, conversationId, conversationResetEveryNRoundsInput, currentConversationRoundCount, currentTurnIndex, executionErrorRetryCountInput, executionTimeoutMinutesInput, excludeThought, filePath, hasSentStartPromptInCurrentConversation, includeHistoryContext, maxRoundsInput, pendingStartPromptTrigger, queue, rawContent, retryState, reuseConversationOnManualStart, runEndReason, runLogs, runStatus, selectedRoles, skipPermissions, skipTurnOnNoOutput, startPromptInput, startPromptRecords, startTurnInput, turnRecords, watchDir, watchExtensionsInput, workDir]);
 
   useEffect(() => {
     void loadRebuildChatTasks()
@@ -780,7 +781,7 @@ const RebuildChatPage: React.FC = () => {
     const nextStartPrompt = payload.startPromptInput;
     const nextStartTurn = payload.startTurnInput;
     const nextIncludeHistory = payload.includeHistoryContext;
-    const nextStopOnNoChanges = payload.stopOnNoChanges;
+    const nextSkipTurnOnNoOutput = payload.skipTurnOnNoOutput;
     const nextSkipPermissions = payload.skipPermissions;
     const nextReuseConversation = payload.reuseConversationOnManualStart;
 
@@ -794,7 +795,7 @@ const RebuildChatPage: React.FC = () => {
     if (typeof nextStartPrompt === 'string') setStartPromptInput(nextStartPrompt);
     if (typeof nextStartTurn === 'string') setStartTurnInput(nextStartTurn);
     if (typeof nextIncludeHistory === 'boolean') setIncludeHistoryContext(nextIncludeHistory);
-    if (typeof nextStopOnNoChanges === 'boolean') setStopOnNoChanges(nextStopOnNoChanges);
+    if (typeof nextSkipTurnOnNoOutput === 'boolean') setSkipTurnOnNoOutput(nextSkipTurnOnNoOutput);
     if (typeof nextSkipPermissions === 'boolean') setSkipPermissions(nextSkipPermissions);
     if (typeof nextReuseConversation === 'boolean') setReuseConversationOnManualStart(nextReuseConversation);
   };
@@ -851,7 +852,7 @@ const RebuildChatPage: React.FC = () => {
 
     persistCurrentTask();
     // eslint-disable-next-line max-len
-  }, [activeTurnState, conversationId, currentTurnIndex, executionErrorRetryCountInput, executionTimeoutMinutesInput, excludeThought, filePath, hasSentStartPromptInCurrentConversation, includeHistoryContext, maxRoundsInput, pendingStartPromptTrigger, queue, rawContent, retryState, reuseConversationOnManualStart, runEndReason, runLogs, runStatus, selectedRoles, skipPermissions, startPromptInput, startPromptRecords, startTurnInput, stopOnNoChanges, tasksLoaded, turnRecords, watchDir, watchExtensionsInput, workDir]);
+  }, [activeTurnState, conversationId, currentTurnIndex, executionErrorRetryCountInput, executionTimeoutMinutesInput, excludeThought, filePath, hasSentStartPromptInCurrentConversation, includeHistoryContext, maxRoundsInput, pendingStartPromptTrigger, queue, rawContent, retryState, reuseConversationOnManualStart, runEndReason, runLogs, runStatus, selectedRoles, skipPermissions, skipTurnOnNoOutput, startPromptInput, startPromptRecords, startTurnInput, tasksLoaded, turnRecords, watchDir, watchExtensionsInput, workDir]);
 
   useEffect(() => {
     const handleBeforeUnload = () => {
@@ -898,6 +899,7 @@ const RebuildChatPage: React.FC = () => {
         runEndReason,
         runLogCount: runLogs.length,
         runStatus,
+        skipTurnOnNoOutput,
         startPromptInput,
         startPromptRecordCount: startPromptRecords.length,
         startTurnInput,
@@ -912,7 +914,7 @@ const RebuildChatPage: React.FC = () => {
       delete window.__REBUILDCHAT_TEST_API__;
     };
     // eslint-disable-next-line max-len
-  }, [conversationId, conversationResetEveryNRoundsInput, currentConversationRoundCount, currentTurnIndex, currentTaskId, effectiveMaxRounds, executionErrorRetryCountInput, executionTimeoutMinutesInput, hasSentStartPromptInCurrentConversation, retryState?.retryAttemptCount, retryState?.retryAt, reuseConversationOnManualStart, runEndReason, runLogs.length, runStatus, startPromptInput, startPromptRecords.length, startTurnInput, taskNotice, turnRecords.length, watchDir, workDir]);
+  }, [conversationId, conversationResetEveryNRoundsInput, currentConversationRoundCount, currentTurnIndex, currentTaskId, effectiveMaxRounds, executionErrorRetryCountInput, executionTimeoutMinutesInput, hasSentStartPromptInCurrentConversation, retryState?.retryAttemptCount, retryState?.retryAt, reuseConversationOnManualStart, runEndReason, runLogs.length, runStatus, skipTurnOnNoOutput, startPromptInput, startPromptRecords.length, startTurnInput, taskNotice, turnRecords.length, watchDir, workDir]);
 
   const syncStartPromptConversationState = (sent: boolean, trigger: RebuildChatStartPromptTrigger | null) => {
     pageStateRef.current.hasSentStartPromptInCurrentConversation = sent;
@@ -1094,7 +1096,7 @@ const RebuildChatPage: React.FC = () => {
       maxRounds: computeEffectiveMaxRounds(pageStateRef.current.maxRoundsInput, queueRef.current.length),
       skipPermissions: pageStateRef.current.skipPermissions,
       startPromptInput: pageStateRef.current.startPromptInput.trim(),
-      stopOnNoChanges: pageStateRef.current.stopOnNoChanges,
+      skipTurnOnNoOutput: pageStateRef.current.skipTurnOnNoOutput,
       watchExtensionsInput: pageStateRef.current.watchExtensionsInput,
       workDir: pageStateRef.current.workDir,
     };
@@ -1106,6 +1108,9 @@ const RebuildChatPage: React.FC = () => {
       created: [],
       updated: [],
       deleted: [],
+    };
+    const hasDetectedFileChanges = (summary: typeof emptyFileChanges) => {
+      return summary.created.length > 0 || summary.updated.length > 0 || summary.deleted.length > 0;
     };
 
     const sendStartPromptIfNeeded = async (options: { conversationId: string | null; targetTurnIndex: number; trigger: RebuildChatStartPromptTrigger }) => {
@@ -1185,13 +1190,87 @@ const RebuildChatPage: React.FC = () => {
       };
     };
 
+    const resetConversationForRetry = (message: string) => {
+      const shouldSendStartPrompt = Boolean(runConfig.startPromptInput);
+      pageStateRef.current.conversationId = null;
+      pageStateRef.current.currentConversationRoundCount = 0;
+      setConversationId(null);
+      setCurrentConversationRoundCount(0);
+      syncStartPromptConversationState(!shouldSendStartPrompt, shouldSendStartPrompt ? 'conversation_reset' : null);
+      turnConversationMetaRef.current = {
+        conversationId: null,
+        currentConversationRoundCount: 0,
+      };
+      appendRunLog('system', message);
+      persistCurrentTask({
+        progress: {
+          conversationId: null,
+          currentConversationRoundCount: 0,
+          hasSentStartPromptInCurrentConversation: !shouldSendStartPrompt,
+          pendingStartPromptTrigger: shouldSendStartPrompt ? 'conversation_reset' : null,
+        },
+      });
+    };
+
+    const runTurnAttempt = async (prompt: string, conversationIdForAttempt: string | null, startedNewConversation: boolean): Promise<RebuildChatExecuteTurnResult> => {
+      const beforeSnapshot = effectiveWatchDir ? await runtime.snapshotDirectory(effectiveWatchDir, runConfig.watchExtensionsInput) : {};
+      const recoveredExecution = await runAgyExecutionWithRecovery(
+        'turn',
+        `第 ${pageStateRef.current.currentTurnIndex + 1} 轮`,
+        (conversationId) =>
+          runtime.startAgyPrintTurn({
+            prompt,
+            cwd: runConfig.workDir,
+            conversationId,
+            skipPermissions: runConfig.skipPermissions,
+          }),
+        conversationIdForAttempt,
+        runConfig.executionTimeoutMinutes,
+        runConfig.executionErrorRetryCount
+      );
+      if (recoveredExecution.status !== 'completed' || !recoveredExecution.result) {
+        return {
+          conversationId: recoveredExecution.conversationId,
+          exitCode: null,
+          fileChanges: emptyFileChanges,
+          interruptStatus: 'paused' as const,
+          output: '',
+          phase: 'turn' as const,
+          retryDirective: null,
+          skipTurnRecord: true,
+          startedNewConversation,
+          turnStatusOverride: null,
+        };
+      }
+
+      const turnResult = recoveredExecution.result;
+      const afterSnapshot = effectiveWatchDir ? await runtime.snapshotDirectory(effectiveWatchDir, runConfig.watchExtensionsInput) : {};
+      const fileChanges = runtime.compareDirectorySnapshots(beforeSnapshot, afterSnapshot);
+      const quotaRetry = parseQuotaRetry({
+        output: turnResult.output,
+        rawLog: turnResult.rawLog,
+      });
+
+      return {
+        conversationId: turnResult.conversationId ?? conversationIdForAttempt,
+        exitCode: turnResult.exitCode,
+        output: turnResult.output,
+        fileChanges,
+        interruptStatus: null,
+        phase: 'turn' as const,
+        retryDirective: quotaRetry.directive,
+        skipTurnRecord: false,
+        startedNewConversation,
+        turnStatusOverride: null,
+      };
+    };
+
     const result = await executeRebuildChatRun({
       queue: queueRef.current,
       startIndex,
       initialConversationId,
       includeHistoryContext: runConfig.includeHistoryContext,
       maxRounds: runConfig.maxRounds,
-      stopOnNoChanges: runConfig.stopOnNoChanges,
       onTurnStart: ({ turnIndex }) => {
         setActiveTurnState('running');
         setCurrentTurnIndex(turnIndex);
@@ -1214,7 +1293,7 @@ const RebuildChatPage: React.FC = () => {
         },
         isAbortRequested: () => abortRequestedRef.current,
       },
-      executeTurn: async ({ prompt, conversationId: activeConversationId }) => {
+      executeTurn: async ({ prompt, conversationId: activeConversationId, turnNumber }) => {
         const shouldResetConversation = shouldResetConversationBeforeTurn({
           conversationId: activeConversationId,
           currentConversationRoundCount: pageStateRef.current.currentConversationRoundCount,
@@ -1266,6 +1345,7 @@ const RebuildChatPage: React.FC = () => {
               retryDirective: null,
               skipTurnRecord: true,
               startedNewConversation: shouldResetConversation || !activeConversationId,
+              turnStatusOverride: null,
             };
           } else if (startPromptResult.status !== 'skipped') {
             return {
@@ -1278,56 +1358,96 @@ const RebuildChatPage: React.FC = () => {
               retryDirective: startPromptResult.status === 'waiting_retry' ? startPromptResult.retryDirective : null,
               skipTurnRecord: true,
               startedNewConversation: shouldResetConversation || !activeConversationId,
+              turnStatusOverride: null,
             };
           }
         }
 
-        const beforeSnapshot = effectiveWatchDir ? await runtime.snapshotDirectory(effectiveWatchDir, runConfig.watchExtensionsInput) : {};
-        const recoveredExecution = await runAgyExecutionWithRecovery(
-          'turn',
-          `第 ${pageStateRef.current.currentTurnIndex + 1} 轮`,
-          (conversationId) =>
-            runtime.startAgyPrintTurn({
-              prompt,
-              cwd: runConfig.workDir,
-              conversationId,
-              skipPermissions: runConfig.skipPermissions,
-            }),
-          effectiveConversationId,
-          runConfig.executionTimeoutMinutes,
-          runConfig.executionErrorRetryCount
-        );
-        if (recoveredExecution.status !== 'completed' || !recoveredExecution.result) {
+        const firstTurnResult = await runTurnAttempt(prompt, effectiveConversationId, shouldResetConversation || !effectiveConversationId);
+        if (firstTurnResult.retryDirective || firstTurnResult.interruptStatus === 'paused' || firstTurnResult.exitCode !== 0 || firstTurnResult.skipTurnRecord || hasDetectedFileChanges(firstTurnResult.fileChanges)) {
+          return firstTurnResult;
+        }
+
+        resetConversationForRetry(`第 ${turnNumber} 轮未检测到文件产出，准备新开会话重试一次。`);
+
+        let retryConversationId: string | null = null;
+        if (!pageStateRef.current.hasSentStartPromptInCurrentConversation) {
+          const retryStartPromptResult = await sendStartPromptIfNeeded({
+            conversationId: null,
+            targetTurnIndex: pageStateRef.current.currentTurnIndex,
+            trigger: 'conversation_reset',
+          });
+
+          if (retryStartPromptResult.status === 'completed') {
+            retryConversationId = retryStartPromptResult.conversationId;
+          } else if (retryStartPromptResult.status === 'paused_timeout' || retryStartPromptResult.status === 'paused_error') {
+            return {
+              conversationId: retryStartPromptResult.conversationId,
+              exitCode: null,
+              fileChanges: emptyFileChanges,
+              interruptStatus: 'paused' as const,
+              output: '',
+              phase: 'start_prompt' as const,
+              retryDirective: null,
+              skipTurnRecord: true,
+              startedNewConversation: true,
+              turnStatusOverride: null,
+            };
+          } else if (retryStartPromptResult.status !== 'skipped') {
+            return {
+              conversationId: retryStartPromptResult.conversationId,
+              exitCode: retryStartPromptResult.exitCode ?? null,
+              fileChanges: emptyFileChanges,
+              interruptStatus: null,
+              output: retryStartPromptResult.output,
+              phase: 'start_prompt' as const,
+              retryDirective: retryStartPromptResult.status === 'waiting_retry' ? retryStartPromptResult.retryDirective : null,
+              skipTurnRecord: true,
+              startedNewConversation: true,
+              turnStatusOverride: null,
+            };
+          }
+        }
+
+        const retriedTurnResult = await runTurnAttempt(prompt, retryConversationId, true);
+        if (retriedTurnResult.retryDirective || retriedTurnResult.interruptStatus === 'paused' || retriedTurnResult.exitCode !== 0 || retriedTurnResult.skipTurnRecord || hasDetectedFileChanges(retriedTurnResult.fileChanges)) {
+          return retriedTurnResult;
+        }
+
+        if (runConfig.skipTurnOnNoOutput) {
+          appendRunLog('system', `第 ${turnNumber} 轮重试后仍未检测到文件产出，已按配置跳过本轮。`);
           return {
-            conversationId: recoveredExecution.conversationId,
-            exitCode: null,
-            fileChanges: emptyFileChanges,
-            interruptStatus: 'paused' as const,
-            output: '',
-            phase: 'turn' as const,
-            retryDirective: null,
-            skipTurnRecord: true,
-            startedNewConversation: shouldResetConversation || !effectiveConversationId,
+            ...retriedTurnResult,
+            turnStatusOverride: 'skipped' as const,
           };
         }
-        const turnResult = recoveredExecution.result;
-        const afterSnapshot = effectiveWatchDir ? await runtime.snapshotDirectory(effectiveWatchDir, runConfig.watchExtensionsInput) : {};
-        const fileChanges = runtime.compareDirectorySnapshots(beforeSnapshot, afterSnapshot);
-        const quotaRetry = parseQuotaRetry({
-          output: turnResult.output,
-          rawLog: turnResult.rawLog,
-        });
 
+        const retryConversationRoundCount = getNextConversationRoundCount({
+          currentConversationId: pageStateRef.current.conversationId,
+          currentConversationRoundCount: pageStateRef.current.currentConversationRoundCount,
+          resolvedConversationId: retriedTurnResult.conversationId,
+          startedNewConversation: true,
+        });
+        turnConversationMetaRef.current = {
+          conversationId: retriedTurnResult.conversationId,
+          currentConversationRoundCount: retryConversationRoundCount,
+        };
+        pageStateRef.current.conversationId = retriedTurnResult.conversationId;
+        pageStateRef.current.currentConversationRoundCount = retryConversationRoundCount;
+        setConversationId(retriedTurnResult.conversationId);
+        setCurrentConversationRoundCount(retryConversationRoundCount);
+        appendRunLog('system', `第 ${turnNumber} 轮重试后仍未检测到文件产出，已自动暂停任务。`);
         return {
-          conversationId: turnResult.conversationId ?? effectiveConversationId,
-          exitCode: turnResult.exitCode,
-          output: turnResult.output,
-          fileChanges,
-          interruptStatus: null,
+          conversationId: retriedTurnResult.conversationId,
+          exitCode: null,
+          fileChanges: emptyFileChanges,
+          interruptStatus: 'paused' as const,
+          output: retriedTurnResult.output,
           phase: 'turn' as const,
-          retryDirective: quotaRetry.directive,
-          skipTurnRecord: false,
-          startedNewConversation: shouldResetConversation || !effectiveConversationId,
+          retryDirective: null,
+          skipTurnRecord: true,
+          startedNewConversation: true,
+          turnStatusOverride: null,
         };
       },
       onConversationId: (nextConversationId) => {
@@ -1374,7 +1494,7 @@ const RebuildChatPage: React.FC = () => {
           id: `turn-${uuid(12)}`,
         };
         const nextTurnRecords = [...pageStateRef.current.turnRecords, nextRecord];
-        if (record.status === 'completed') {
+        if (record.status === 'completed' || record.status === 'skipped') {
           setActiveTurnState('completed_not_advanced');
         }
         setTurnRecords((previous) => [...previous, nextRecord]);
@@ -1384,7 +1504,7 @@ const RebuildChatPage: React.FC = () => {
             currentConversationRoundCount: turnConversationMetaRef.current.currentConversationRoundCount,
             currentTurnIndex: Math.max(record.turnNumber - 1, 0),
             turnRecords: nextTurnRecords,
-            activeTurnState: record.status === 'completed' ? 'completed_not_advanced' : pageStateRef.current.activeTurnState,
+            activeTurnState: record.status === 'completed' || record.status === 'skipped' ? 'completed_not_advanced' : pageStateRef.current.activeTurnState,
             retryState: null,
           },
         });
@@ -1602,7 +1722,7 @@ const RebuildChatPage: React.FC = () => {
     setStartPromptInput(task.startPromptInput);
     setStartTurnInput(task.startTurnInput);
     setIncludeHistoryContext(task.includeHistoryContext);
-    setStopOnNoChanges(task.stopOnNoChanges);
+    setSkipTurnOnNoOutput(task.skipTurnOnNoOutput);
     setSkipPermissions(task.skipPermissions);
     setReuseConversationOnManualStart(task.reuseConversationOnManualStart);
     setConversationId(task.progress.conversationId);
@@ -2248,10 +2368,10 @@ const RebuildChatPage: React.FC = () => {
 
                   <div className={styles.toggleRow}>
                     <div>
-                      <div className={styles.toggleTitle}>无产出自动停止</div>
-                      <div className={styles.roleHint}>如果本轮前后目录快照没有新增 / 修改 / 删除，就结束运行。</div>
+                      <div className={styles.toggleTitle}>无产出跳过本轮</div>
+                      <div className={styles.roleHint}>首次无产出会新开会话重试一次；再次无产出时，开启则跳过本轮，关闭则暂停。</div>
                     </div>
-                    <Switch checked={stopOnNoChanges} disabled={isRunLocked} onChange={(checked) => setStopOnNoChanges(checked)} />
+                    <Switch checked={skipTurnOnNoOutput} disabled={isRunLocked} onChange={(checked) => setSkipTurnOnNoOutput(checked)} />
                   </div>
 
                   <div className={styles.toggleRow}>
@@ -2461,7 +2581,7 @@ const RebuildChatPage: React.FC = () => {
                           <Text bold>第 {record.turnNumber} 轮</Text>
                           <div className={styles.queueMeta}>
                             <Tag color='blue'>{record.role}</Tag>
-                            <Tag color={record.status === 'completed' ? 'green' : record.status === 'aborted' ? 'orange' : 'red'}>{record.status}</Tag>
+                            <Tag color={record.status === 'completed' ? 'green' : record.status === 'skipped' ? 'gold' : record.status === 'aborted' ? 'orange' : 'red'}>{record.status}</Tag>
                             {record.conversationId ? <Tag color='gray'>{record.conversationId.slice(0, 8)}</Tag> : null}
                           </div>
                         </div>

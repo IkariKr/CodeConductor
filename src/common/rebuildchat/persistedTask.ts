@@ -83,7 +83,8 @@ export interface RebuildChatPersistedTask {
   conversationResetEveryNRoundsInput: string;
   startPromptInput: string;
   startTurnInput: string;
-  stopOnNoChanges: boolean;
+  skipTurnOnNoOutput: boolean;
+  stopOnNoChanges?: boolean;
   skipPermissions: boolean;
   reuseConversationOnManualStart: boolean;
   progress: RebuildChatPersistedTaskProgress;
@@ -170,7 +171,8 @@ export const normalizeRebuildChatTasks = (value: unknown): RebuildChatPersistedT
         (typeof candidate.executionTimeoutMinutesInput === 'string' || typeof candidate.executionTimeoutMinutesInput === 'undefined') &&
         (typeof candidate.conversationResetEveryNRoundsInput === 'string' || typeof candidate.conversationResetEveryNRoundsInput === 'undefined') &&
         (typeof candidate.startPromptInput === 'string' || typeof candidate.startPromptInput === 'undefined') &&
-        typeof candidate.stopOnNoChanges === 'boolean' &&
+        (typeof candidate.skipTurnOnNoOutput === 'boolean' || typeof candidate.skipTurnOnNoOutput === 'undefined') &&
+        (typeof candidate.stopOnNoChanges === 'boolean' || typeof candidate.stopOnNoChanges === 'undefined') &&
         typeof candidate.skipPermissions === 'boolean' &&
         Boolean(candidate.progress) &&
         (typeof candidate.progress?.currentConversationRoundCount === 'number' || typeof candidate.progress?.currentConversationRoundCount === 'undefined') &&
@@ -199,6 +201,7 @@ export const normalizeRebuildChatTasks = (value: unknown): RebuildChatPersistedT
           conversationResetEveryNRoundsInput: typeof candidate.conversationResetEveryNRoundsInput === 'string' ? candidate.conversationResetEveryNRoundsInput : '',
           startPromptInput: typeof candidate.startPromptInput === 'string' ? candidate.startPromptInput : '',
           startTurnInput: typeof candidate.startTurnInput === 'string' ? candidate.startTurnInput : getStartTurnInputValue(currentTurnIndex, queueLength),
+          skipTurnOnNoOutput: typeof candidate.skipTurnOnNoOutput === 'boolean' ? candidate.skipTurnOnNoOutput : true,
           reuseConversationOnManualStart: typeof candidate.reuseConversationOnManualStart === 'boolean' ? candidate.reuseConversationOnManualStart : false,
           progress: {
             ...(candidate.progress as RebuildChatPersistedTaskProgress),

@@ -137,6 +137,14 @@ const parseBooleanEnv = (value?: string): boolean | null => {
   return null;
 };
 
+const shouldAutoOpenDevTools = (): boolean => {
+  if (app.isPackaged) {
+    return false;
+  }
+
+  return parseBooleanEnv(process.env.CODECONDUCTOR_OPEN_DEVTOOLS || process.env.CC_OPEN_DEVTOOLS) === true;
+};
+
 const resolveRemoteAccess = (config: WebUIUserConfig): boolean => {
   const envRemote = parseBooleanEnv(process.env.CodeConductor_ALLOW_REMOTE || process.env.CodeConductor_REMOTE);
   const hostHint = process.env.CodeConductor_HOST?.trim();
@@ -195,6 +203,9 @@ const createWindow = (): void => {
       : { frame: false }),
     webPreferences: {
       preload: MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY,
+      // Electron 37 enables renderer sandbox by default, but our webpack preload
+      // bundle still relies on the unsandboxed preload environment.
+      sandbox: false,
       webviewTag: true, // 启用 webview 标签用于 HTML 预览 / Enable webview tag for HTML preview
     },
   });
@@ -208,10 +219,8 @@ const createWindow = (): void => {
     // Error loading main window URL
   });
 
-  // 只在开发环境自动打开 DevTools / Only auto-open DevTools in development
-  // 使用 app.isPackaged 判断更可靠，打包后的应用不会自动打开 DevTools
-  // Using app.isPackaged is more reliable, packaged apps won't auto-open DevTools
-  if (!app.isPackaged) {
+  // DevTools is opt-in in development to avoid noisy protocol errors from Chromium.
+  if (shouldAutoOpenDevTools()) {
     mainWindow.webContents.openDevTools();
   }
 };

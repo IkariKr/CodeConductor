@@ -609,6 +609,19 @@
   font-size: 13px;
 }
 
+.historyActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.historyHint {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #627086;
+}
+
 .turnRecordList {
   display: flex;
   flex-direction: column;

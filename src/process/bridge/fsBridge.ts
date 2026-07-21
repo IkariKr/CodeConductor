@@ -23,6 +23,10 @@ import { readDirectoryRecursive } from '../utils';
 
 type ResourceType = 'rules' | 'skills';
 
+const isFileNotFoundError = (error: unknown): boolean => {
+  return Boolean(error && typeof error === 'object' && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT');
+};
+
 /**
  * Recursively list markdown files in directory
  * 递归列出目录内的 Markdown 文件
@@ -323,7 +327,9 @@ export function initFsBridge(): void {
       const content = await fs.readFile(filePath, 'utf-8');
       return content;
     } catch (error) {
-      console.error('Failed to read file:', error);
+      if (!isFileNotFoundError(error)) {
+        console.error('Failed to read file:', error);
+      }
       throw error;
     }
   });
@@ -344,6 +350,8 @@ export function initFsBridge(): void {
   // 写入文件
   ipcBridge.fs.writeFile.provider(async ({ path: filePath, data }) => {
     try {
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+
       // 处理字符串类型 / Handle string type
       if (typeof data === 'string') {
         await fs.writeFile(filePath, data, 'utf-8');
@@ -403,6 +411,17 @@ export function initFsBridge(): void {
     }
   });
 
+  ipcBridge.fs.appendFile.provider(async ({ path: filePath, data }) => {
+    try {
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.appendFile(filePath, data, 'utf-8');
+      return true;
+    } catch (error) {
+      console.error('Failed to append file:', error);
+      return false;
+    }
+  });
+
   // 获取文件元数据
   ipcBridge.fs.getFileMetadata.provider(async ({ path: filePath }) => {
     try {
@@ -415,7 +434,9 @@ export function initFsBridge(): void {
         lastModified: stats.mtime.getTime(),
       };
     } catch (error) {
-      console.error('Failed to get file metadata:', error);
+      if (!isFileNotFoundError(error)) {
+        console.error('Failed to get file metadata:', error);
+      }
       throw error;
     }
   });

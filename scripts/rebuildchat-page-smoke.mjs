@@ -961,8 +961,8 @@ const main = async () => {
     );
 
     const noOutputSkipCards = await page.getByTestId('turn-record-card').allInnerTexts();
-    if (!noOutputSkipCards[0]?.includes('skipped') || !noOutputSkipCards[1]?.includes('WITH_CONV|第 2 条')) {
-      throw new Error(`Expected skipped first turn and continued second turn after no output retry, got: ${JSON.stringify(noOutputSkipCards)}`);
+    if (!noOutputSkipCards[0]?.includes('WITH_CONV|第 2 条') || !noOutputSkipCards[1]?.includes('skipped')) {
+      throw new Error(`Expected latest completed turn first and skipped first turn second after no output retry, got: ${JSON.stringify(noOutputSkipCards)}`);
     }
 
     await page.evaluate(() => window.__REBUILDCHAT_TEST_API__?.clearPersistedTasks());
@@ -1189,8 +1189,8 @@ const main = async () => {
     );
 
     const resetTurnCards = await page.getByTestId('turn-record-card').allInnerTexts();
-    if (!resetTurnCards[0]?.includes('WITH_CONV|第 1 条') || !resetTurnCards[1]?.includes('WITH_CONV|第 2 条')) {
-      throw new Error(`Expected both turns to reuse the fresh conversation created by start prompt, got: ${JSON.stringify(resetTurnCards)}`);
+    if (!resetTurnCards[0]?.includes('WITH_CONV|第 2 条') || !resetTurnCards[1]?.includes('WITH_CONV|第 1 条')) {
+      throw new Error(`Expected latest reset turn first and both turns to reuse the fresh conversation created by start prompt, got: ${JSON.stringify(resetTurnCards)}`);
     }
 
     const resetStartPromptCards = await page.getByTestId('start-prompt-record-card').allInnerTexts();

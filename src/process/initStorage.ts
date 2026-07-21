@@ -529,6 +529,26 @@ const getBuiltinAssistants = (): AcpBackendConfig[] => {
   return assistants;
 };
 
+const hasBuiltinAssistantMetadataChanged = (existing: AcpBackendConfig, builtin: AcpBackendConfig): boolean => {
+  if (existing.name !== builtin.name) {
+    return true;
+  }
+
+  if (existing.description !== builtin.description) {
+    return true;
+  }
+
+  if (existing.avatar !== builtin.avatar) {
+    return true;
+  }
+
+  if (existing.isPreset !== builtin.isPreset) {
+    return true;
+  }
+
+  return existing.isBuiltin !== builtin.isBuiltin;
+};
+
 /**
  * 创建默认的 MCP 服务器配置
  */
@@ -657,7 +677,7 @@ const initStorage = async () => {
         // Update only if key fields are different to avoid unnecessary writes
         // 注意：enabled 和 presetAgentType 字段由用户控制，不参与 shouldUpdate 判断
         // Note: enabled and presetAgentType are user-controlled, not included in shouldUpdate check
-        const shouldUpdate = existing.name !== builtin.name || existing.description !== builtin.description || existing.avatar !== builtin.avatar || existing.isPreset !== builtin.isPreset || existing.isBuiltin !== builtin.isBuiltin;
+        const shouldUpdate = hasBuiltinAssistantMetadataChanged(existing, builtin);
         // 当 enabled 是 undefined 或需要迁移时，设置默认值（Cowork 启用，其他禁用）
         // When enabled is undefined or migration needed, set default value (Cowork enabled, others disabled)
         const needsEnabledFix = existing.enabled === undefined || needsMigration;

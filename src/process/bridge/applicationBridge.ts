@@ -7,10 +7,17 @@
 import { app } from 'electron';
 import path from 'path';
 import { ipcBridge } from '../../common';
+import type { IRebuildChatRendererSnapshot } from '../../common/ipcBridge';
 import { getSystemDir, getHomeDir, getSkillsDir, ProcessEnv } from '../initStorage';
 import { copyDirectoryRecursively } from '../utils';
 import WorkerManage from '../WorkerManage';
 import { getZoomFactor, setZoomFactor } from '../utils/zoom';
+
+let rebuildChatRendererSnapshot: IRebuildChatRendererSnapshot | null = null;
+
+export const getRebuildChatRendererSnapshot = (): IRebuildChatRendererSnapshot | null => {
+  return rebuildChatRendererSnapshot;
+};
 
 export function initApplicationBridge(): void {
   ipcBridge.application.restart.provider(() => {
@@ -33,6 +40,11 @@ export function initApplicationBridge(): void {
     } catch (e) {
       return { success: false, msg: e.message || e.toString() };
     }
+  });
+
+  ipcBridge.application.updateRebuildChatSnapshot.provider(({ snapshot }) => {
+    rebuildChatRendererSnapshot = snapshot;
+    return Promise.resolve({ success: true });
   });
 
   ipcBridge.application.systemInfo.provider(() => {

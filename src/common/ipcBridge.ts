@@ -46,6 +46,7 @@ export const application = {
   commandDirs: bridge.buildProvider<{ cursor: string; claude: string; codex: string }, void>('system.command-dirs'), // 获取命令目录
   superpowersCommandDir: bridge.buildProvider<{ dir: string }, { repoId: string; subdir?: string }>('system.superpowers-command-dir'), // 获取 Superpowers 命令目录
   updateSystemInfo: bridge.buildProvider<IBridgeResponse, { cacheDir: string; workDir: string }>('system.update-info'), // 更新系统信息
+  updateRebuildChatSnapshot: bridge.buildProvider<IBridgeResponse, { snapshot: IRebuildChatRendererSnapshot | null }>('app.update-rebuildchat-snapshot'),
   getZoomFactor: bridge.buildProvider<number, void>('app.get-zoom-factor'),
   setZoomFactor: bridge.buildProvider<number, { factor: number }>('app.set-zoom-factor'),
 };
@@ -62,6 +63,7 @@ export const fs = {
   readFileBuffer: bridge.buildProvider<ArrayBuffer, { path: string }>('read-file-buffer'), // 读取二进制文件为 ArrayBuffer
   createTempFile: bridge.buildProvider<string, { fileName: string }>('create-temp-file'), // 创建临时文件
   writeFile: bridge.buildProvider<boolean, { path: string; data: Uint8Array | string }>('write-file'), // 写入文件
+  appendFile: bridge.buildProvider<boolean, { path: string; data: string }>('append-file'),
   getFileMetadata: bridge.buildProvider<IFileMetadata, { path: string }>('get-file-metadata'), // 获取文件元数据
   copyFilesToWorkspace: bridge.buildProvider<
     // 返回成功与部分失败的详细状态，便于前端提示用户 / Return details for successful and failed copies for better UI feedback
@@ -406,6 +408,22 @@ export interface IFileMetadata {
   type: string;
   lastModified: number;
   isDirectory?: boolean;
+}
+
+export interface IRebuildChatRendererSnapshot {
+  taskId: string | null;
+  runStatus: string;
+  queueLength: number;
+  loadedRunLogCount: number;
+  loadedTurnRecordCount: number;
+  loadedStartPromptRecordCount: number;
+  retryState: {
+    phase?: string;
+    reason?: string;
+    retryAt?: number | null;
+    retryAttemptCount?: number;
+  } | null;
+  waitingRetry: boolean;
 }
 
 export interface IResponseMessage {

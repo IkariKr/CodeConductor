@@ -4,17 +4,38 @@ import { appendCustomPromptQueueItem, createEditablePromptQueue, removeEditableP
 import { DEFAULT_EXECUTION_ERROR_RETRY_COUNT_INPUT, getExecutionErrorRetryValidationMessage, parseExecutionErrorRetryCount } from '@/common/rebuildchat/executionErrorRetry';
 import { DEFAULT_EXECUTION_TIMEOUT_MINUTES_INPUT, getExecutionTimeoutMs, getExecutionTimeoutValidationMessage, parseExecutionTimeoutMinutes } from '@/common/rebuildchat/executionTimeout';
 import { getStartTurnInputValue, resolveManualStartConversationId, resolveRequestedStartIndex } from '@/common/rebuildchat/manualStart';
-import { canResumeRebuildChatTask, getPersistedTaskStatus, getRebuildChatTaskResumeIndex, sortRebuildChatTasks, type RebuildChatActiveTurnState, type RebuildChatPersistedLogEntry, type RebuildChatPersistedRetryState, type RebuildChatPersistedStartPromptRecord, type RebuildChatPersistedTask, type RebuildChatPersistedTaskStatus, type RebuildChatPersistedTurnRecord, type RebuildChatRetryPhase, type RebuildChatStartPromptTrigger } from '@/common/rebuildchat/persistedTask';
+import {
+  canResumeRebuildChatTask,
+  getPersistedTaskStatus,
+  getRebuildChatTaskResumeIndex,
+  sortRebuildChatTaskSummaries,
+  toRebuildChatPersistedTaskMeta,
+  toRebuildChatPersistedTaskSourceSnapshot,
+  toRebuildChatPersistedTaskSummaryFromMeta,
+  type RebuildChatActiveTurnState,
+  type RebuildChatPersistedLogEntry,
+  type RebuildChatPersistedRetryState,
+  type RebuildChatPersistedStartPromptRecord,
+  type RebuildChatPersistedTask,
+  type RebuildChatPersistedTaskMeta,
+  type RebuildChatPersistedTaskPreview,
+  type RebuildChatPersistedTaskStatus,
+  type RebuildChatPersistedTaskSummary,
+  type RebuildChatPersistedTurnRecord,
+  type RebuildChatRetryPhase,
+  type RebuildChatStartPromptTrigger,
+  type RebuildChatTaskHistoryKind,
+} from '@/common/rebuildchat/persistedTask';
 import { parsePromptFile, type ParsePromptFileResult } from '@/common/rebuildchat/promptFileParser';
 import { executeRebuildChatRun, summarizeFileChanges, type RebuildChatExecuteTurnResult, type RunEndReason, type RunLogKind, type RunStatus } from '@/common/rebuildchat/rebuildChatExecutor';
 import { parseQuotaRetry } from '@/common/rebuildchat/quotaRetryParser';
 import { parseError, uuid } from '@/common/utils';
 import { Button, Card, Checkbox, Empty, Input, Message, Space, Switch, Tag, Typography } from '@arco-design/web-react';
 import { CloseOne, Delete, Pause, Play, Plus, Refresh, Right, UploadOne } from '@icon-park/react';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getRebuildChatRuntimeDriver, type AgyTurnExecution, type AgyTurnResult } from './runtime';
 import styles from './index.module.css';
-import { loadRebuildChatTasks, saveRebuildChatTasks } from './taskStorage';
+import { appendRebuildChatStartPromptRecord, appendRebuildChatTaskLog, appendRebuildChatTurnRecord, clearRebuildChatTasks, deleteRebuildChatTask, loadRebuildChatTaskHistorySlice, loadRebuildChatTaskPreview, loadRebuildChatTasks, replaceRebuildChatTaskSource, upsertRebuildChatTaskMeta } from './taskStorage';
 
 const { Paragraph, Text } = Typography;
 
@@ -22,9 +43,9 @@ type RunLogEntry = RebuildChatPersistedLogEntry;
 type RetryState = RebuildChatPersistedRetryState;
 type StartPromptRecord = RebuildChatPersistedStartPromptRecord;
 type TurnRecord = RebuildChatPersistedTurnRecord;
-type RebuildChatTaskOverrides = Omit<Partial<RebuildChatPersistedTask>, 'progress' | 'source'> & {
-  progress?: Partial<RebuildChatPersistedTask['progress']>;
-  source?: Partial<RebuildChatPersistedTask['source']>;
+type RebuildChatTaskMetaOverrides = Omit<Partial<RebuildChatPersistedTaskMeta>, 'progress' | 'source'> & {
+  progress?: Partial<RebuildChatPersistedTaskMeta['progress']>;
+  source?: Partial<RebuildChatPersistedTaskMeta['source']>;
 };
 
 interface RebuildChatSeedPromptFilePayload {
@@ -122,6 +143,8 @@ type TimedAgyResult = TimedExecutionResult<AgyTurnResult>;
 type ResilientAgyResult = ResilientExecutionResult<AgyTurnResult>;
 type StartAgyExecution = (conversationId: MaybeConversationId) => Promise<AgyTurnExecution>;
 
+const DEFAULT_HISTORY_PAGE_SIZE = 50;
+
 interface RunAgyExecutionWithTimeout {
   (phase: RebuildChatRetryPhase, label: string, exec: StartAgyExecution, initialConversationId: MaybeConversationId, timeoutMinutes: number): Promise<TimedAgyResult>;
 }
@@ -176,15 +199,15 @@ const getTaskStatusLabel = (status: RebuildChatPersistedTaskStatus): string => {
   }
 };
 
-const getTaskTitle = (task: RebuildChatPersistedTask): string => {
+const getTaskTitle = (task: RebuildChatPersistedTaskSummary): string => {
   const normalizedPath = task.source.filePath.replace(/\\/g, '/');
   const segments = normalizedPath.split('/').filter(Boolean);
   return segments[segments.length - 1] || `任务 ${task.taskId.slice(0, 8)}`;
 };
 
-const getTaskProgressLabel = (task: RebuildChatPersistedTask): string => {
-  const nextTurn = Math.min(getRebuildChatTaskResumeIndex(task) + 1, Math.max(task.queueSnapshot.length, 1));
-  const totalTurns = Math.max(task.progress.effectiveMaxRounds || task.queueSnapshot.length, 0);
+const getTaskProgressLabel = (task: RebuildChatPersistedTaskSummary): string => {
+  const nextTurn = Math.min(getRebuildChatTaskResumeIndex(task) + 1, Math.max(task.queueLength, 1));
+  const totalTurns = Math.max(task.progress.effectiveMaxRounds || task.queueLength, 0);
   return `第 ${nextTurn} / ${totalTurns}`;
 };
 
@@ -221,6 +244,34 @@ const createStartPromptRecord = (trigger: RebuildChatStartPromptTrigger, targetT
   conversationId,
   timestamp: new Date().toLocaleTimeString(),
 });
+
+const takeLastEntries = <T,>(entries: T[], maxEntries: number): T[] => {
+  if (entries.length <= maxEntries) {
+    return entries;
+  }
+
+  return entries.slice(-maxEntries);
+};
+
+interface TaskPayloadSignatureState {
+  activeTurnState: RebuildChatActiveTurnState;
+  conversationId: string | null;
+  currentTurnIndex: number;
+  filePath: string;
+  pendingStartPromptTrigger: RebuildChatStartPromptTrigger | null;
+  queue: EditablePromptQueueItem[];
+  rawContent: string;
+  retryState: RetryState | null;
+  runEndReason: RunEndReason;
+  runLogs: RunLogEntry[];
+  runStatus: RunStatus;
+  startPromptRecords: StartPromptRecord[];
+  turnRecords: TurnRecord[];
+}
+
+const getTaskPayloadSignature = (state: TaskPayloadSignatureState): string => {
+  return [state.filePath, state.rawContent.length, state.queue.length, state.runLogs.length, state.startPromptRecords.length, state.turnRecords.length, state.currentTurnIndex, state.runStatus, state.runEndReason ?? '', state.activeTurnState, state.conversationId ?? '', state.pendingStartPromptTrigger ?? '', state.retryState?.retryAttemptCount ?? '', state.retryState?.retryAt ?? ''].join('|');
+};
 
 const getRetryPhaseLabel = (phase: RebuildChatRetryPhase | undefined): string => {
   return phase === 'start_prompt' ? '起始 prompt' : '当前轮';
@@ -277,6 +328,41 @@ const formatRetryRemaining = (retryAt: number | null, now: number): string => {
   return formatRetryDelay(Math.max(retryAt - now, 0));
 };
 
+const RetryCountdownNotice: React.FC<{
+  currentTurnIndex: number;
+  retryState: RetryState;
+}> = ({ currentTurnIndex, retryState }) => {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (retryState.retryAt === null) {
+      return;
+    }
+
+    setNow(Date.now());
+    const intervalId = window.setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [retryState.retryAt]);
+
+  const retrySummaryText = retryState.retryAt === null ? `${getRetryPhaseLabel(retryState.phase)}因额度限制暂停，按固定间隔 ${formatRetryDelay(retryState.retryDelayMs)} 自动重试。` : `${getRetryPhaseLabel(retryState.phase)}因额度限制暂停，将在 ${formatRetryClock(retryState.retryAt)} 自动重试，剩余约 ${formatRetryRemaining(retryState.retryAt, now)}。`;
+
+  return (
+    <div className={styles.waitNotice} data-testid='run-retry-waiting'>
+      <div>额度等待：{retrySummaryText}</div>
+      <div>
+        恢复方式：继续当前会话，
+        {retryState.phase === 'start_prompt' ? `重发第 ${(retryState.resumeTurnIndex ?? currentTurnIndex) + 1} 轮前的起始 prompt。` : `重发第 ${(retryState.resumeTurnIndex ?? currentTurnIndex) + 1} 轮。`}
+      </div>
+      {retryState.lastMatchedMessage ? <div>最近提示：{retryState.lastMatchedMessage}</div> : null}
+    </div>
+  );
+};
+
 const RebuildChatPage: React.FC = () => {
   const [filePath, setFilePath] = useState('');
   const [rawContent, setRawContent] = useState('');
@@ -306,6 +392,17 @@ const RebuildChatPage: React.FC = () => {
   const [runEndReason, setRunEndReason] = useState<RunEndReason>(null);
   const [runLogs, setRunLogs] = useState<RunLogEntry[]>([]);
   const [turnRecords, setTurnRecords] = useState<TurnRecord[]>([]);
+  const [runLogTotalCount, setRunLogTotalCount] = useState(0);
+  const [turnRecordTotalCount, setTurnRecordTotalCount] = useState(0);
+  const [startPromptRecordTotalCount, setStartPromptRecordTotalCount] = useState(0);
+  const [_runLogVisibleCount, setRunLogVisibleCount] = useState(DEFAULT_HISTORY_PAGE_SIZE);
+  const [_turnRecordVisibleCount, setTurnRecordVisibleCount] = useState(DEFAULT_HISTORY_PAGE_SIZE);
+  const [_startPromptRecordVisibleCount, setStartPromptRecordVisibleCount] = useState(DEFAULT_HISTORY_PAGE_SIZE);
+  const [historyLoadingState, setHistoryLoadingState] = useState<Record<RebuildChatTaskHistoryKind, boolean>>({
+    runLogs: false,
+    startPromptRecords: false,
+    turnRecords: false,
+  });
   const [currentTurnIndex, setCurrentTurnIndex] = useState(0);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [currentConversationRoundCount, setCurrentConversationRoundCount] = useState(0);
@@ -314,8 +411,7 @@ const RebuildChatPage: React.FC = () => {
   const [startPromptRecords, setStartPromptRecords] = useState<StartPromptRecord[]>([]);
   const [activeTurnState, setActiveTurnState] = useState<RebuildChatActiveTurnState>('idle');
   const [retryState, setRetryState] = useState<RetryState | null>(null);
-  const [retryClockNow, setRetryClockNow] = useState(() => Date.now());
-  const [persistedTasks, setPersistedTasks] = useState<RebuildChatPersistedTask[]>([]);
+  const [persistedTasks, setPersistedTasks] = useState<RebuildChatPersistedTaskSummary[]>([]);
   const [tasksLoaded, setTasksLoaded] = useState(false);
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
   const [taskNotice, setTaskNotice] = useState('');
@@ -328,15 +424,30 @@ const RebuildChatPage: React.FC = () => {
   const abortRequestedRef = useRef(false);
   const queueRebuildSuppressedRef = useRef(0);
   const applyingTaskRef = useRef(false);
-  const persistedTasksRef = useRef<RebuildChatPersistedTask[]>([]);
+  const persistedTasksRef = useRef<RebuildChatPersistedTaskSummary[]>([]);
   const currentTaskIdRef = useRef<string | null>(null);
   const retryTimeoutRef = useRef<number | null>(null);
   const retryAutoResumeRef = useRef(false);
+  const deletedTaskSignatureRef = useRef<string | null>(null);
   const turnConversationMetaRef = useRef({
     conversationId: null as string | null,
     currentConversationRoundCount: 0,
   });
   const saveTasksPromiseRef = useRef(Promise.resolve());
+  const pendingTaskMetaWriteRef = useRef<RebuildChatPersistedTaskMeta | null>(null);
+  const pendingTaskSourceWriteRef = useRef<{ taskId: string; source: ReturnType<typeof toRebuildChatPersistedTaskSourceSnapshot> } | null>(null);
+  const pendingTaskRunLogAppendRef = useRef<Array<{ taskId: string; entry: RunLogEntry }>>([]);
+  const pendingTaskTurnRecordAppendRef = useRef<Array<{ taskId: string; entry: TurnRecord }>>([]);
+  const pendingTaskStartPromptAppendRef = useRef<Array<{ taskId: string; entry: StartPromptRecord }>>([]);
+  const taskWriteLoopRef = useRef<Promise<void> | null>(null);
+  const historyStateRef = useRef({
+    runLogTotalCount: 0,
+    startPromptRecordTotalCount: 0,
+    turnRecordTotalCount: 0,
+    runLogVisibleCount: DEFAULT_HISTORY_PAGE_SIZE,
+    startPromptRecordVisibleCount: DEFAULT_HISTORY_PAGE_SIZE,
+    turnRecordVisibleCount: DEFAULT_HISTORY_PAGE_SIZE,
+  });
   const pageStateRef = useRef({
     filePath: '',
     rawContent: '',
@@ -370,21 +481,20 @@ const RebuildChatPage: React.FC = () => {
     retryState: null as RetryState | null,
   });
 
-  const commitPersistedTasks = (tasks: RebuildChatPersistedTask[]) => {
-    const nextTasks = sortRebuildChatTasks(tasks);
+  const commitPersistedTaskSummaries = (tasks: RebuildChatPersistedTaskSummary[]) => {
+    const nextTasks = sortRebuildChatTaskSummaries(tasks);
     persistedTasksRef.current = nextTasks;
     setPersistedTasks(nextTasks);
-    saveTasksPromiseRef.current = saveTasksPromiseRef.current
-      .then(() => saveRebuildChatTasks(nextTasks))
-      .catch((error) => {
-        console.error('[RebuildChat] Failed to save tasks:', error);
-      });
     return nextTasks;
   };
 
-  const buildPersistedTask = (taskId: string, createdAt: number, overrides: RebuildChatTaskOverrides = {}): RebuildChatPersistedTask => {
+  const getTaskWriteBarrier = () => {
+    return taskWriteLoopRef.current ?? Promise.resolve();
+  };
+
+  const buildPersistedTaskBase = (taskId: string, createdAt: number): RebuildChatPersistedTask => {
     const state = pageStateRef.current;
-    const baseTask: RebuildChatPersistedTask = {
+    return {
       taskId,
       createdAt,
       updatedAt: Date.now(),
@@ -424,19 +534,113 @@ const RebuildChatPage: React.FC = () => {
         retryState: state.retryState ? { ...state.retryState } : null,
       },
     };
+  };
+
+  const buildPersistedTaskMeta = (taskId: string, createdAt: number, overrides: RebuildChatTaskMetaOverrides = {}): RebuildChatPersistedTaskMeta => {
+    const baseMeta = toRebuildChatPersistedTaskMeta(buildPersistedTaskBase(taskId, createdAt));
+    baseMeta.progress.runLogCount = historyStateRef.current.runLogTotalCount;
+    baseMeta.progress.startPromptRecordCount = historyStateRef.current.startPromptRecordTotalCount;
+    baseMeta.progress.turnRecordCount = historyStateRef.current.turnRecordTotalCount;
 
     return {
-      ...baseTask,
+      ...baseMeta,
       ...overrides,
       source: {
-        ...baseTask.source,
+        ...baseMeta.source,
         ...(overrides.source || {}),
       },
       progress: {
-        ...baseTask.progress,
+        ...baseMeta.progress,
         ...(overrides.progress || {}),
       },
     };
+  };
+
+  const buildPersistedTaskSourceSnapshot = (taskId: string, createdAt: number) => {
+    return toRebuildChatPersistedTaskSourceSnapshot(buildPersistedTaskBase(taskId, createdAt));
+  };
+
+  const queueTaskMetaWrite = (meta: RebuildChatPersistedTaskMeta) => {
+    const nextSummary = toRebuildChatPersistedTaskSummaryFromMeta(meta);
+    commitPersistedTaskSummaries([nextSummary, ...persistedTasksRef.current.filter((item) => item.taskId !== meta.taskId)]);
+    pendingTaskMetaWriteRef.current = meta;
+    saveTasksPromiseRef.current = startTaskWriteLoop();
+  };
+
+  const queueTaskSourceWrite = (taskId: string, source: ReturnType<typeof toRebuildChatPersistedTaskSourceSnapshot>) => {
+    pendingTaskSourceWriteRef.current = {
+      taskId,
+      source,
+    };
+    saveTasksPromiseRef.current = startTaskWriteLoop();
+  };
+
+  const queueTaskHistoryAppend = (kind: RebuildChatTaskHistoryKind, taskId: string, entry: RunLogEntry | TurnRecord | StartPromptRecord) => {
+    if (kind === 'runLogs') {
+      pendingTaskRunLogAppendRef.current.push({ taskId, entry: entry as RunLogEntry });
+    } else if (kind === 'turnRecords') {
+      pendingTaskTurnRecordAppendRef.current.push({ taskId, entry: entry as TurnRecord });
+    } else {
+      pendingTaskStartPromptAppendRef.current.push({ taskId, entry: entry as StartPromptRecord });
+    }
+    saveTasksPromiseRef.current = startTaskWriteLoop();
+  };
+
+  const hasPendingTaskWrites = () => {
+    // eslint-disable-next-line max-len
+    return Boolean(pendingTaskMetaWriteRef.current || pendingTaskSourceWriteRef.current || pendingTaskRunLogAppendRef.current.length || pendingTaskTurnRecordAppendRef.current.length || pendingTaskStartPromptAppendRef.current.length);
+  };
+
+  const startTaskWriteLoop = () => {
+    if (taskWriteLoopRef.current) {
+      return taskWriteLoopRef.current;
+    }
+
+    const writeLoop = (async () => {
+      while (hasPendingTaskWrites()) {
+        const nextMeta = pendingTaskMetaWriteRef.current;
+        const nextSource = pendingTaskSourceWriteRef.current;
+        const nextRunLogs = pendingTaskRunLogAppendRef.current.splice(0);
+        const nextTurnRecords = pendingTaskTurnRecordAppendRef.current.splice(0);
+        const nextStartPromptRecords = pendingTaskStartPromptAppendRef.current.splice(0);
+
+        pendingTaskMetaWriteRef.current = null;
+        pendingTaskSourceWriteRef.current = null;
+
+        try {
+          if (nextSource) {
+            await replaceRebuildChatTaskSource(nextSource.taskId, nextSource.source);
+          }
+
+          for (const item of nextRunLogs) {
+            await appendRebuildChatTaskLog(item.taskId, item.entry);
+          }
+
+          for (const item of nextTurnRecords) {
+            await appendRebuildChatTurnRecord(item.taskId, item.entry);
+          }
+
+          for (const item of nextStartPromptRecords) {
+            await appendRebuildChatStartPromptRecord(item.taskId, item.entry);
+          }
+
+          if (nextMeta) {
+            const writtenTasks = await upsertRebuildChatTaskMeta(nextMeta);
+            commitPersistedTaskSummaries(writtenTasks);
+          }
+        } catch (error) {
+          console.error('[RebuildChat] Failed to save task:', error);
+        }
+      }
+    })().finally(() => {
+      taskWriteLoopRef.current = null;
+      if (hasPendingTaskWrites()) {
+        saveTasksPromiseRef.current = startTaskWriteLoop();
+      }
+    });
+
+    taskWriteLoopRef.current = writeLoop;
+    return writeLoop;
   };
 
   const hasTaskPayload = () => {
@@ -454,14 +658,15 @@ const RebuildChatPage: React.FC = () => {
     }
 
     const taskId = uuid();
-    const task = buildPersistedTask(taskId, Date.now());
-    commitPersistedTasks([task, ...persistedTasksRef.current.filter((item) => item.taskId !== taskId)]);
+    const createdAt = Date.now();
+    queueTaskSourceWrite(taskId, buildPersistedTaskSourceSnapshot(taskId, createdAt));
+    queueTaskMetaWrite(buildPersistedTaskMeta(taskId, createdAt));
     currentTaskIdRef.current = taskId;
     setCurrentTaskId(taskId);
     return taskId;
   };
 
-  const persistCurrentTask = (overrides: RebuildChatTaskOverrides = {}) => {
+  const persistCurrentTask = (overrides: RebuildChatTaskMetaOverrides = {}) => {
     const taskId = ensureCurrentTask();
     if (!taskId) {
       return null;
@@ -469,15 +674,37 @@ const RebuildChatPage: React.FC = () => {
 
     const existing = persistedTasksRef.current.find((task) => task.taskId === taskId);
     const createdAt = existing?.createdAt ?? Date.now();
-    const nextTask = buildPersistedTask(taskId, createdAt, overrides);
-    commitPersistedTasks([nextTask, ...persistedTasksRef.current.filter((task) => task.taskId !== taskId)]);
-    return nextTask;
+    const nextMeta = buildPersistedTaskMeta(taskId, createdAt, overrides);
+    queueTaskMetaWrite(nextMeta);
+    return nextMeta;
+  };
+
+  const persistCurrentTaskSource = () => {
+    const taskId = ensureCurrentTask();
+    if (!taskId) {
+      return null;
+    }
+
+    const createdAt = persistedTasksRef.current.find((task) => task.taskId === taskId)?.createdAt ?? Date.now();
+    queueTaskSourceWrite(taskId, buildPersistedTaskSourceSnapshot(taskId, createdAt));
+    queueTaskMetaWrite(buildPersistedTaskMeta(taskId, createdAt));
+    return taskId;
   };
 
   const clearPersistedTasks = async () => {
     currentTaskIdRef.current = null;
     setCurrentTaskId(null);
-    commitPersistedTasks([]);
+    commitPersistedTaskSummaries([]);
+    pendingTaskMetaWriteRef.current = null;
+    pendingTaskSourceWriteRef.current = null;
+    pendingTaskRunLogAppendRef.current = [];
+    pendingTaskTurnRecordAppendRef.current = [];
+    pendingTaskStartPromptAppendRef.current = [];
+    saveTasksPromiseRef.current = getTaskWriteBarrier()
+      .then(() => clearRebuildChatTasks())
+      .catch((error) => {
+        console.error('[RebuildChat] Failed to clear tasks:', error);
+      });
     await saveTasksPromiseRef.current;
   };
 
@@ -487,49 +714,8 @@ const RebuildChatPage: React.FC = () => {
       const taskId = currentTaskIdRef.current ?? ensureCurrentTask();
       if (taskId) {
         const createdAt = persistedTasksRef.current.find((task) => task.taskId === taskId)?.createdAt ?? Date.now();
-        commitPersistedTasks([
-          {
-            taskId,
-            createdAt,
-            updatedAt: Date.now(),
-            status: getPersistedTaskStatus(runStatus, runEndReason),
-            source: {
-              filePath,
-              rawContent,
-              excludeThought,
-              selectedRoles: [...selectedRoles],
-            },
-            queueSnapshot: queue.map((item) => ({ ...item })),
-            workDir,
-            watchDir,
-            watchExtensionsInput,
-            includeHistoryContext,
-            maxRoundsInput,
-            executionErrorRetryCountInput,
-            executionTimeoutMinutesInput,
-            conversationResetEveryNRoundsInput,
-            startPromptInput,
-            startTurnInput,
-            skipTurnOnNoOutput,
-            skipPermissions,
-            reuseConversationOnManualStart,
-            progress: {
-              conversationId,
-              currentConversationRoundCount,
-              currentTurnIndex,
-              effectiveMaxRounds,
-              hasSentStartPromptInCurrentConversation,
-              pendingStartPromptTrigger,
-              runEndReason,
-              runLogs: runLogs.map((entry) => ({ ...entry })),
-              startPromptRecords: startPromptRecords.map((record) => ({ ...record })),
-              turnRecords: turnRecords.map((record) => ({ ...record })),
-              activeTurnState,
-              retryState: retryState ? { ...retryState } : null,
-            },
-          },
-          ...persistedTasksRef.current.filter((task) => task.taskId !== taskId),
-        ]);
+        queueTaskSourceWrite(taskId, buildPersistedTaskSourceSnapshot(taskId, createdAt));
+        queueTaskMetaWrite(buildPersistedTaskMeta(taskId, createdAt));
       }
     }
     await saveTasksPromiseRef.current;
@@ -654,6 +840,14 @@ const RebuildChatPage: React.FC = () => {
     };
   }, [queue]);
 
+  const displayedStartPromptRecords = useMemo(() => {
+    return [...startPromptRecords].reverse();
+  }, [startPromptRecords]);
+
+  const displayedTurnRecords = useMemo(() => {
+    return [...turnRecords].reverse();
+  }, [turnRecords]);
+
   const effectiveMaxRounds = useMemo(() => {
     return computeEffectiveMaxRounds(maxRoundsInput, queue.length);
   }, [maxRoundsInput, queue.length]);
@@ -710,7 +904,23 @@ const RebuildChatPage: React.FC = () => {
   };
 
   const appendRunLog = (kind: RunLogKind, text: string) => {
-    setRunLogs((previous) => [...previous, createRunLogEntry(kind, text)]);
+    const nextEntry = createRunLogEntry(kind, text);
+    const nextTotalCount = historyStateRef.current.runLogTotalCount + 1;
+    const nextLogs = takeLastEntries([...pageStateRef.current.runLogs, nextEntry], historyStateRef.current.runLogVisibleCount);
+    pageStateRef.current.runLogs = nextLogs;
+    historyStateRef.current.runLogTotalCount = nextTotalCount;
+    setRunLogs(nextLogs);
+    setRunLogTotalCount(nextTotalCount);
+
+    const taskId = ensureCurrentTask();
+    if (taskId) {
+      queueTaskHistoryAppend('runLogs', taskId, nextEntry);
+      persistCurrentTask({
+        progress: {
+          runLogCount: nextTotalCount,
+        },
+      });
+    }
   };
 
   const clearRetryTimeout = () => {
@@ -732,6 +942,17 @@ const RebuildChatPage: React.FC = () => {
     setRunEndReason(null);
     setRunLogs([]);
     setTurnRecords([]);
+    setRunLogTotalCount(0);
+    setTurnRecordTotalCount(0);
+    setStartPromptRecordTotalCount(0);
+    setRunLogVisibleCount(DEFAULT_HISTORY_PAGE_SIZE);
+    setTurnRecordVisibleCount(DEFAULT_HISTORY_PAGE_SIZE);
+    setStartPromptRecordVisibleCount(DEFAULT_HISTORY_PAGE_SIZE);
+    setHistoryLoadingState({
+      runLogs: false,
+      startPromptRecords: false,
+      turnRecords: false,
+    });
     setCurrentTurnIndex(0);
     setConversationId(null);
     setCurrentConversationRoundCount(0);
@@ -741,6 +962,14 @@ const RebuildChatPage: React.FC = () => {
     turnConversationMetaRef.current = {
       conversationId: null,
       currentConversationRoundCount: 0,
+    };
+    historyStateRef.current = {
+      runLogTotalCount: 0,
+      startPromptRecordTotalCount: 0,
+      turnRecordTotalCount: 0,
+      runLogVisibleCount: DEFAULT_HISTORY_PAGE_SIZE,
+      startPromptRecordVisibleCount: DEFAULT_HISTORY_PAGE_SIZE,
+      turnRecordVisibleCount: DEFAULT_HISTORY_PAGE_SIZE,
     };
     setActiveTurnState('idle');
     setRetryState(null);
@@ -830,7 +1059,6 @@ const RebuildChatPage: React.FC = () => {
         hasSentStartPromptInCurrentConversation: pageStateRef.current.hasSentStartPromptInCurrentConversation,
         pendingStartPromptTrigger: pageStateRef.current.pendingStartPromptTrigger,
         runEndReason: reason,
-        startPromptRecords: pageStateRef.current.startPromptRecords,
         activeTurnState: 'idle',
         retryState: null,
       },
@@ -846,13 +1074,39 @@ const RebuildChatPage: React.FC = () => {
       if (!hasTaskPayload()) {
         return;
       }
+      const nextSignature = getTaskPayloadSignature(pageStateRef.current);
+      if (deletedTaskSignatureRef.current === nextSignature) {
+        return;
+      }
+      deletedTaskSignatureRef.current = null;
       ensureCurrentTask();
       return;
     }
 
     persistCurrentTask();
     // eslint-disable-next-line max-len
-  }, [activeTurnState, conversationId, currentTurnIndex, executionErrorRetryCountInput, executionTimeoutMinutesInput, excludeThought, filePath, hasSentStartPromptInCurrentConversation, includeHistoryContext, maxRoundsInput, pendingStartPromptTrigger, queue, rawContent, retryState, reuseConversationOnManualStart, runEndReason, runLogs, runStatus, selectedRoles, skipPermissions, skipTurnOnNoOutput, startPromptInput, startPromptRecords, startTurnInput, tasksLoaded, turnRecords, watchDir, watchExtensionsInput, workDir]);
+  }, [activeTurnState, conversationId, currentTurnIndex, currentConversationRoundCount, executionErrorRetryCountInput, executionTimeoutMinutesInput, hasSentStartPromptInCurrentConversation, includeHistoryContext, maxRoundsInput, pendingStartPromptTrigger, retryState, reuseConversationOnManualStart, runEndReason, runStatus, skipPermissions, skipTurnOnNoOutput, startPromptInput, startTurnInput, tasksLoaded, watchDir, watchExtensionsInput, workDir]);
+
+  useEffect(() => {
+    if (!tasksLoaded || applyingTaskRef.current) {
+      return;
+    }
+
+    if (!currentTaskIdRef.current) {
+      if (!hasTaskPayload()) {
+        return;
+      }
+      const nextSignature = getTaskPayloadSignature(pageStateRef.current);
+      if (deletedTaskSignatureRef.current === nextSignature) {
+        return;
+      }
+      deletedTaskSignatureRef.current = null;
+      ensureCurrentTask();
+      return;
+    }
+
+    persistCurrentTaskSource();
+  }, [excludeThought, filePath, queue, rawContent, selectedRoles, tasksLoaded]);
 
   useEffect(() => {
     const handleBeforeUnload = () => {
@@ -898,13 +1152,16 @@ const RebuildChatPage: React.FC = () => {
         reuseConversationOnManualStart,
         runEndReason,
         runLogCount: runLogs.length,
+        loadedRunLogCount: runLogs.length,
         runStatus,
         skipTurnOnNoOutput,
         startPromptInput,
         startPromptRecordCount: startPromptRecords.length,
+        loadedStartPromptRecordCount: startPromptRecords.length,
         startTurnInput,
         taskNotice,
         turnRecordCount: turnRecords.length,
+        loadedTurnRecordCount: turnRecords.length,
         watchDir,
         workDir,
       }),
@@ -924,15 +1181,22 @@ const RebuildChatPage: React.FC = () => {
   };
 
   const appendStartPromptHistory = (record: StartPromptRecord) => {
-    const nextRecords = [...pageStateRef.current.startPromptRecords, record];
+    const nextTotalCount = historyStateRef.current.startPromptRecordTotalCount + 1;
+    const nextRecords = takeLastEntries([...pageStateRef.current.startPromptRecords, record], historyStateRef.current.startPromptRecordVisibleCount);
     pageStateRef.current.startPromptRecords = nextRecords;
+    historyStateRef.current.startPromptRecordTotalCount = nextTotalCount;
     setStartPromptRecords(nextRecords);
+    setStartPromptRecordTotalCount(nextTotalCount);
+    const taskId = ensureCurrentTask();
+    if (taskId) {
+      queueTaskHistoryAppend('startPromptRecords', taskId, record);
+    }
     persistCurrentTask({
       progress: {
         conversationId: record.conversationId,
         hasSentStartPromptInCurrentConversation: record.status === 'completed',
         pendingStartPromptTrigger: record.status === 'completed' ? null : record.trigger,
-        startPromptRecords: nextRecords,
+        startPromptRecordCount: nextTotalCount,
         retryState: null,
       },
     });
@@ -1493,17 +1757,25 @@ const RebuildChatPage: React.FC = () => {
           ...record,
           id: `turn-${uuid(12)}`,
         };
-        const nextTurnRecords = [...pageStateRef.current.turnRecords, nextRecord];
+        const nextTotalCount = historyStateRef.current.turnRecordTotalCount + 1;
+        const nextTurnRecords = takeLastEntries([...pageStateRef.current.turnRecords, nextRecord], historyStateRef.current.turnRecordVisibleCount);
+        pageStateRef.current.turnRecords = nextTurnRecords;
+        historyStateRef.current.turnRecordTotalCount = nextTotalCount;
         if (record.status === 'completed' || record.status === 'skipped') {
           setActiveTurnState('completed_not_advanced');
         }
-        setTurnRecords((previous) => [...previous, nextRecord]);
+        setTurnRecords(nextTurnRecords);
+        setTurnRecordTotalCount(nextTotalCount);
+        const taskId = ensureCurrentTask();
+        if (taskId) {
+          queueTaskHistoryAppend('turnRecords', taskId, nextRecord);
+        }
         persistCurrentTask({
           progress: {
             conversationId: turnConversationMetaRef.current.conversationId,
             currentConversationRoundCount: turnConversationMetaRef.current.currentConversationRoundCount,
             currentTurnIndex: Math.max(record.turnNumber - 1, 0),
-            turnRecords: nextTurnRecords,
+            turnRecordCount: nextTotalCount,
             activeTurnState: record.status === 'completed' || record.status === 'skipped' ? 'completed_not_advanced' : pageStateRef.current.activeTurnState,
             retryState: null,
           },
@@ -1612,6 +1884,12 @@ const RebuildChatPage: React.FC = () => {
     setRunLogs(params.seedLogs);
     setStartPromptRecords([]);
     setTurnRecords([]);
+    setRunLogTotalCount(params.seedLogs.length);
+    setStartPromptRecordTotalCount(0);
+    setTurnRecordTotalCount(0);
+    setRunLogVisibleCount(DEFAULT_HISTORY_PAGE_SIZE);
+    setStartPromptRecordVisibleCount(DEFAULT_HISTORY_PAGE_SIZE);
+    setTurnRecordVisibleCount(DEFAULT_HISTORY_PAGE_SIZE);
     setConversationId(params.initialConversationId);
     setCurrentConversationRoundCount(params.initialConversationRoundCount ?? 0);
     syncStartPromptConversationState(!shouldSendStartPrompt, initialStartPromptTrigger);
@@ -1632,8 +1910,16 @@ const RebuildChatPage: React.FC = () => {
     pageStateRef.current.runLogs = params.seedLogs;
     pageStateRef.current.startPromptRecords = [];
     pageStateRef.current.turnRecords = [];
+    historyStateRef.current = {
+      runLogTotalCount: params.seedLogs.length,
+      startPromptRecordTotalCount: 0,
+      turnRecordTotalCount: 0,
+      runLogVisibleCount: DEFAULT_HISTORY_PAGE_SIZE,
+      startPromptRecordVisibleCount: DEFAULT_HISTORY_PAGE_SIZE,
+      turnRecordVisibleCount: DEFAULT_HISTORY_PAGE_SIZE,
+    };
 
-    const nextTask = buildPersistedTask(nextTaskId, createdAt, {
+    const nextTaskMeta = buildPersistedTaskMeta(nextTaskId, createdAt, {
       status: 'running',
       reuseConversationOnManualStart: typeof params.reuseConversationOnManualStartValue === 'boolean' ? params.reuseConversationOnManualStartValue : pageStateRef.current.reuseConversationOnManualStart,
       startTurnInput: params.startTurnInputValue ?? getStartTurnInputValue(params.startIndex, queueRef.current.length),
@@ -1645,14 +1931,18 @@ const RebuildChatPage: React.FC = () => {
         hasSentStartPromptInCurrentConversation: !shouldSendStartPrompt,
         pendingStartPromptTrigger: initialStartPromptTrigger,
         runEndReason: null,
-        runLogs: params.seedLogs,
-        startPromptRecords: [],
-        turnRecords: [],
+        runLogCount: params.seedLogs.length,
+        startPromptRecordCount: 0,
+        turnRecordCount: 0,
         activeTurnState: 'idle',
         retryState: null,
       },
     });
-    commitPersistedTasks([nextTask, ...persistedTasksRef.current.filter((task) => task.taskId !== nextTaskId)]);
+    queueTaskSourceWrite(nextTaskId, buildPersistedTaskSourceSnapshot(nextTaskId, createdAt));
+    for (const entry of params.seedLogs) {
+      queueTaskHistoryAppend('runLogs', nextTaskId, entry);
+    }
+    queueTaskMetaWrite(nextTaskMeta);
     void executeQueue(params.startIndex, params.initialConversationId, params.effectiveWatchDir);
   };
 
@@ -1682,7 +1972,6 @@ const RebuildChatPage: React.FC = () => {
         hasSentStartPromptInCurrentConversation: pageStateRef.current.hasSentStartPromptInCurrentConversation,
         pendingStartPromptTrigger: pageStateRef.current.pendingStartPromptTrigger,
         runEndReason: null,
-        startPromptRecords: pageStateRef.current.startPromptRecords,
         activeTurnState: 'idle',
         retryState: null,
       },
@@ -1691,7 +1980,8 @@ const RebuildChatPage: React.FC = () => {
     void executeQueue(startIndex, initialConversationId, effectiveWatchDir);
   };
 
-  const applyPersistedTask = (task: RebuildChatPersistedTask, resumeMode: boolean = false) => {
+  const applyPersistedTask = (preview: RebuildChatPersistedTaskPreview, resumeMode: boolean = false) => {
+    const { meta, task } = preview;
     applyingTaskRef.current = true;
     queueRebuildSuppressedRef.current = 3;
     currentExecutionPhaseRef.current = 'turn';
@@ -1738,6 +2028,25 @@ const RebuildChatPage: React.FC = () => {
     setRunLogs(task.progress.runLogs.map((entry) => ({ ...entry })));
     setStartPromptRecords(task.progress.startPromptRecords.map((record) => ({ ...record })));
     setTurnRecords(task.progress.turnRecords.map((record) => ({ ...record })));
+    setRunLogTotalCount(meta.progress.runLogCount);
+    setStartPromptRecordTotalCount(meta.progress.startPromptRecordCount);
+    setTurnRecordTotalCount(meta.progress.turnRecordCount);
+    setRunLogVisibleCount(Math.max(task.progress.runLogs.length, DEFAULT_HISTORY_PAGE_SIZE));
+    setStartPromptRecordVisibleCount(Math.max(task.progress.startPromptRecords.length, DEFAULT_HISTORY_PAGE_SIZE));
+    setTurnRecordVisibleCount(Math.max(task.progress.turnRecords.length, DEFAULT_HISTORY_PAGE_SIZE));
+    setHistoryLoadingState({
+      runLogs: false,
+      startPromptRecords: false,
+      turnRecords: false,
+    });
+    historyStateRef.current = {
+      runLogTotalCount: meta.progress.runLogCount,
+      startPromptRecordTotalCount: meta.progress.startPromptRecordCount,
+      turnRecordTotalCount: meta.progress.turnRecordCount,
+      runLogVisibleCount: Math.max(task.progress.runLogs.length, DEFAULT_HISTORY_PAGE_SIZE),
+      startPromptRecordVisibleCount: Math.max(task.progress.startPromptRecords.length, DEFAULT_HISTORY_PAGE_SIZE),
+      turnRecordVisibleCount: Math.max(task.progress.turnRecords.length, DEFAULT_HISTORY_PAGE_SIZE),
+    };
     setRetryState(task.progress.retryState ? { ...task.progress.retryState } : null);
     setRunStatus(normalizeLoadedRunStatus(task));
     setActiveTurnState('idle');
@@ -1769,13 +2078,38 @@ const RebuildChatPage: React.FC = () => {
     });
   };
 
-  const handleLoadTask = (task: RebuildChatPersistedTask) => {
-    applyPersistedTask(task, false);
-    Message.success(`已载入任务：${getTaskTitle(task)}`);
+  const loadPersistedTaskDetail = async (taskSummary: RebuildChatPersistedTaskSummary) => {
+    const preview = await loadRebuildChatTaskPreview(taskSummary.taskId, {
+      runLogs: DEFAULT_HISTORY_PAGE_SIZE,
+      startPromptRecords: DEFAULT_HISTORY_PAGE_SIZE,
+      turnRecords: DEFAULT_HISTORY_PAGE_SIZE,
+    });
+    if (!preview) {
+      Message.error('这条任务详情已经丢失，无法载入。');
+      return null;
+    }
+
+    return preview;
   };
 
-  const handleResumeTask = async (task: RebuildChatPersistedTask) => {
-    applyPersistedTask(task, true);
+  const handleLoadTask = async (taskSummary: RebuildChatPersistedTaskSummary) => {
+    const preview = await loadPersistedTaskDetail(taskSummary);
+    if (!preview) {
+      return;
+    }
+
+    applyPersistedTask(preview, false);
+    Message.success(`已载入任务：${getTaskTitle(taskSummary)}`);
+  };
+
+  const handleResumeTask = async (taskSummary: RebuildChatPersistedTaskSummary) => {
+    const preview = await loadPersistedTaskDetail(taskSummary);
+    if (!preview) {
+      return;
+    }
+
+    const { task } = preview;
+    applyPersistedTask(preview, true);
     if (resolveExecutionErrorRetryCount(task.executionErrorRetryCountInput) === null) {
       return;
     }
@@ -1828,30 +2162,32 @@ const RebuildChatPage: React.FC = () => {
   };
 
   const handleDeleteTask = async (taskId: string) => {
+    const isCurrentTask = currentTaskIdRef.current === taskId;
     if (currentTaskIdRef.current === taskId) {
+      deletedTaskSignatureRef.current = getTaskPayloadSignature(pageStateRef.current);
       currentTaskIdRef.current = null;
       setCurrentTaskId(null);
     }
 
-    commitPersistedTasks(persistedTasksRef.current.filter((task) => task.taskId !== taskId));
+    commitPersistedTaskSummaries(persistedTasksRef.current.filter((task) => task.taskId !== taskId));
+    if (isCurrentTask || pendingTaskMetaWriteRef.current?.taskId === taskId || pendingTaskSourceWriteRef.current?.taskId === taskId) {
+      pendingTaskMetaWriteRef.current = null;
+      pendingTaskSourceWriteRef.current = null;
+      pendingTaskRunLogAppendRef.current = pendingTaskRunLogAppendRef.current.filter((item) => item.taskId !== taskId);
+      pendingTaskTurnRecordAppendRef.current = pendingTaskTurnRecordAppendRef.current.filter((item) => item.taskId !== taskId);
+      pendingTaskStartPromptAppendRef.current = pendingTaskStartPromptAppendRef.current.filter((item) => item.taskId !== taskId);
+    }
+    saveTasksPromiseRef.current = getTaskWriteBarrier()
+      .then(() => deleteRebuildChatTask(taskId))
+      .then((writtenTasks) => {
+        commitPersistedTaskSummaries(writtenTasks);
+      })
+      .catch((error) => {
+        console.error('[RebuildChat] Failed to delete task:', error);
+      });
     await saveTasksPromiseRef.current;
     Message.success('已删除任务记录。');
   };
-
-  useEffect(() => {
-    if (runStatus !== 'waiting_retry' || !retryState?.retryAt) {
-      return;
-    }
-
-    setRetryClockNow(Date.now());
-    const intervalId = window.setInterval(() => {
-      setRetryClockNow(Date.now());
-    }, 1000);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [retryState?.retryAt, runStatus]);
 
   useEffect(() => {
     if (runStatus !== 'waiting_retry' || !retryState || !retryAutoResumeRef.current) {
@@ -1900,6 +2236,93 @@ const RebuildChatPage: React.FC = () => {
       retryAutoResumeRef.current = false;
       clearRetryTimeout();
     };
+  }, []);
+
+  useEffect(() => {
+    void ipcBridge.application.updateRebuildChatSnapshot
+      .invoke({
+        snapshot: {
+          taskId: currentTaskId,
+          runStatus,
+          queueLength: queue.length,
+          loadedRunLogCount: runLogs.length,
+          loadedTurnRecordCount: turnRecords.length,
+          loadedStartPromptRecordCount: startPromptRecords.length,
+          retryState: retryState
+            ? {
+                phase: retryState.phase,
+                reason: retryState.reason,
+                retryAt: retryState.retryAt,
+                retryAttemptCount: retryState.retryAttemptCount,
+              }
+            : null,
+          waitingRetry: runStatus === 'waiting_retry',
+        },
+      })
+      .catch(() => {});
+  }, [currentTaskId, queue.length, retryState, runLogs.length, runStatus, startPromptRecords.length, turnRecords.length]);
+
+  const loadOlderHistory = useCallback(async (kind: RebuildChatTaskHistoryKind, loadAll: boolean = false) => {
+    const taskId = currentTaskIdRef.current;
+    if (!taskId) {
+      return;
+    }
+
+    const totalCount = kind === 'runLogs' ? historyStateRef.current.runLogTotalCount : kind === 'turnRecords' ? historyStateRef.current.turnRecordTotalCount : historyStateRef.current.startPromptRecordTotalCount;
+    const loadedCount = kind === 'runLogs' ? pageStateRef.current.runLogs.length : kind === 'turnRecords' ? pageStateRef.current.turnRecords.length : pageStateRef.current.startPromptRecords.length;
+
+    if (loadedCount >= totalCount) {
+      return;
+    }
+
+    const limit = loadAll ? totalCount - loadedCount : DEFAULT_HISTORY_PAGE_SIZE;
+    setHistoryLoadingState((previous) => ({
+      ...previous,
+      [kind]: true,
+    }));
+
+    try {
+      if (kind === 'runLogs') {
+        const slice = await loadRebuildChatTaskHistorySlice(taskId, 'runLogs', loadedCount, limit);
+        if (!slice.items.length) {
+          return;
+        }
+        const nextItems = [...slice.items.map((entry) => ({ ...entry })), ...pageStateRef.current.runLogs];
+        pageStateRef.current.runLogs = nextItems;
+        historyStateRef.current.runLogVisibleCount = nextItems.length;
+        setRunLogs(nextItems);
+        setRunLogVisibleCount(nextItems.length);
+        return;
+      }
+
+      if (kind === 'turnRecords') {
+        const slice = await loadRebuildChatTaskHistorySlice(taskId, 'turnRecords', loadedCount, limit);
+        if (!slice.items.length) {
+          return;
+        }
+        const nextItems = [...slice.items.map((entry) => ({ ...entry })), ...pageStateRef.current.turnRecords];
+        pageStateRef.current.turnRecords = nextItems;
+        historyStateRef.current.turnRecordVisibleCount = nextItems.length;
+        setTurnRecords(nextItems);
+        setTurnRecordVisibleCount(nextItems.length);
+        return;
+      }
+
+      const slice = await loadRebuildChatTaskHistorySlice(taskId, 'startPromptRecords', loadedCount, limit);
+      if (!slice.items.length) {
+        return;
+      }
+      const nextItems = [...slice.items.map((entry) => ({ ...entry })), ...pageStateRef.current.startPromptRecords];
+      pageStateRef.current.startPromptRecords = nextItems;
+      historyStateRef.current.startPromptRecordVisibleCount = nextItems.length;
+      setStartPromptRecords(nextItems);
+      setStartPromptRecordVisibleCount(nextItems.length);
+    } finally {
+      setHistoryLoadingState((previous) => ({
+        ...previous,
+        [kind]: false,
+      }));
+    }
   }, []);
 
   const toggleRole = (role: string) => {
@@ -2158,8 +2581,6 @@ const RebuildChatPage: React.FC = () => {
 
     return `会话策略：每 ${parsed.value} 轮自动断开旧 conversationId，当前会话已累计 ${currentConversationRoundCount} 轮。`;
   }, [conversationResetEveryNRoundsInput, currentConversationRoundCount]);
-
-  const retrySummaryText = runStatus === 'waiting_retry' && retryState ? (retryState.retryAt === null ? `${getRetryPhaseLabel(retryState.phase)}因额度限制暂停，按固定间隔 ${formatRetryDelay(retryState.retryDelayMs)} 自动重试。` : `${getRetryPhaseLabel(retryState.phase)}因额度限制暂停，将在 ${formatRetryClock(retryState.retryAt)} 自动重试，剩余约 ${formatRetryRemaining(retryState.retryAt, retryClockNow)}。`) : '';
 
   return (
     <div className={styles.page} data-testid='rebuildchat-page'>
@@ -2489,16 +2910,7 @@ const RebuildChatPage: React.FC = () => {
                   </div>
                 </div>
 
-                {retrySummaryText ? (
-                  <div className={styles.waitNotice} data-testid='run-retry-waiting'>
-                    <div>额度等待：{retrySummaryText}</div>
-                    <div>
-                      恢复方式：继续当前会话，
-                      {retryState?.phase === 'start_prompt' ? `重发第 ${(retryState?.resumeTurnIndex ?? currentTurnIndex) + 1} 轮前的起始 prompt。` : `重发第 ${(retryState?.resumeTurnIndex ?? currentTurnIndex) + 1} 轮。`}
-                    </div>
-                    {retryState?.lastMatchedMessage ? <div>最近提示：{retryState.lastMatchedMessage}</div> : null}
-                  </div>
-                ) : null}
+                {runStatus === 'waiting_retry' && retryState ? <RetryCountdownNotice currentTurnIndex={currentTurnIndex} retryState={retryState} /> : null}
 
                 <Space wrap>
                   <Button data-testid='run-start' type='primary' icon={<Play theme='outline' size='18' fill='currentColor' />} disabled={runStatus === 'running' || runStatus === 'stopping' || runStatus === 'waiting_retry' || !queue.length} onClick={handleStart}>
@@ -2537,6 +2949,19 @@ const RebuildChatPage: React.FC = () => {
                     <div className={styles.logPlaceholder}>还没有运行日志。</div>
                   )}
                 </div>
+                {runLogs.length < runLogTotalCount ? (
+                  <div className={styles.historyActions}>
+                    <Button size='small' loading={historyLoadingState.runLogs} onClick={() => void loadOlderHistory('runLogs')}>
+                      再加载 50 条
+                    </Button>
+                    <Button size='small' disabled={historyLoadingState.runLogs} onClick={() => void loadOlderHistory('runLogs', true)}>
+                      查看全部
+                    </Button>
+                    <div className={styles.historyHint}>
+                      已加载 {runLogs.length} / {runLogTotalCount} 条日志
+                    </div>
+                  </div>
+                ) : null}
               </Space>
             </Card>
 
@@ -2545,65 +2970,95 @@ const RebuildChatPage: React.FC = () => {
               <div className={styles.panelDesc}>每轮都会记录 prompt、agy 输出摘要、文件变化摘要和状态，方便后续做联调与验收。</div>
 
               <Space direction='vertical' size={16} className={styles.observePanelBody} style={{ width: '100%', marginTop: 16 }}>
-                {startPromptRecords.length ? (
-                  <div className={styles.turnRecordList} data-testid='start-prompt-record-list'>
-                    {startPromptRecords.map((record) => (
-                      <div key={record.id} className={styles.turnRecordCard} data-testid='start-prompt-record-card'>
-                        <div className={styles.turnRecordHeader}>
-                          <Text bold>起始 prompt</Text>
-                          <div className={styles.queueMeta}>
-                            <Tag color='blue'>{record.trigger === 'task_start' ? '任务开始' : '会话重置'}</Tag>
-                            <Tag color={record.status === 'completed' ? 'green' : record.status === 'aborted' ? 'orange' : 'red'}>{record.status}</Tag>
-                            <Tag color='gray'>目标第 {record.targetTurnIndex + 1} 轮</Tag>
-                            {record.conversationId ? <Tag color='gray'>{record.conversationId.slice(0, 8)}</Tag> : null}
+                {displayedStartPromptRecords.length ? (
+                  <>
+                    <div className={styles.turnRecordList} data-testid='start-prompt-record-list'>
+                      {displayedStartPromptRecords.map((record) => (
+                        <div key={record.id} className={styles.turnRecordCard} data-testid='start-prompt-record-card'>
+                          <div className={styles.turnRecordHeader}>
+                            <Text bold>起始 prompt</Text>
+                            <div className={styles.queueMeta}>
+                              <Tag color='blue'>{record.trigger === 'task_start' ? '任务开始' : '会话重置'}</Tag>
+                              <Tag color={record.status === 'completed' ? 'green' : record.status === 'aborted' ? 'orange' : 'red'}>{record.status}</Tag>
+                              <Tag color='gray'>目标第 {record.targetTurnIndex + 1} 轮</Tag>
+                              {record.conversationId ? <Tag color='gray'>{record.conversationId.slice(0, 8)}</Tag> : null}
+                            </div>
+                          </div>
+
+                          <div className={styles.turnRecordBlock}>
+                            <div className={styles.turnRecordLabel}>发送内容</div>
+                            <pre className={styles.turnRecordText}>{record.prompt}</pre>
+                          </div>
+
+                          <div className={styles.turnRecordBlock}>
+                            <div className={styles.turnRecordLabel}>agy 输出</div>
+                            <pre className={styles.turnRecordText}>{record.output || '(空输出)'}</pre>
                           </div>
                         </div>
-
-                        <div className={styles.turnRecordBlock}>
-                          <div className={styles.turnRecordLabel}>发送内容</div>
-                          <pre className={styles.turnRecordText}>{record.prompt}</pre>
-                        </div>
-
-                        <div className={styles.turnRecordBlock}>
-                          <div className={styles.turnRecordLabel}>agy 输出</div>
-                          <pre className={styles.turnRecordText}>{record.output || '(空输出)'}</pre>
+                      ))}
+                    </div>
+                    {startPromptRecords.length < startPromptRecordTotalCount ? (
+                      <div className={styles.historyActions}>
+                        <Button size='small' loading={historyLoadingState.startPromptRecords} onClick={() => void loadOlderHistory('startPromptRecords')}>
+                          再加载 50 条
+                        </Button>
+                        <Button size='small' disabled={historyLoadingState.startPromptRecords} onClick={() => void loadOlderHistory('startPromptRecords', true)}>
+                          查看全部
+                        </Button>
+                        <div className={styles.historyHint}>
+                          已加载 {startPromptRecords.length} / {startPromptRecordTotalCount} 条起始记录
                         </div>
                       </div>
-                    ))}
-                  </div>
+                    ) : null}
+                  </>
                 ) : null}
 
-                {turnRecords.length ? (
-                  <div className={styles.turnRecordList} data-testid='turn-record-list'>
-                    {turnRecords.map((record) => (
-                      <div key={record.id} className={styles.turnRecordCard} data-testid='turn-record-card'>
-                        <div className={styles.turnRecordHeader}>
-                          <Text bold>第 {record.turnNumber} 轮</Text>
-                          <div className={styles.queueMeta}>
-                            <Tag color='blue'>{record.role}</Tag>
-                            <Tag color={record.status === 'completed' ? 'green' : record.status === 'skipped' ? 'gold' : record.status === 'aborted' ? 'orange' : 'red'}>{record.status}</Tag>
-                            {record.conversationId ? <Tag color='gray'>{record.conversationId.slice(0, 8)}</Tag> : null}
+                {displayedTurnRecords.length ? (
+                  <>
+                    <div className={styles.turnRecordList} data-testid='turn-record-list'>
+                      {displayedTurnRecords.map((record) => (
+                        <div key={record.id} className={styles.turnRecordCard} data-testid='turn-record-card'>
+                          <div className={styles.turnRecordHeader}>
+                            <Text bold>第 {record.turnNumber} 轮</Text>
+                            <div className={styles.queueMeta}>
+                              <Tag color='blue'>{record.role}</Tag>
+                              <Tag color={record.status === 'completed' ? 'green' : record.status === 'skipped' ? 'gold' : record.status === 'aborted' ? 'orange' : 'red'}>{record.status}</Tag>
+                              {record.conversationId ? <Tag color='gray'>{record.conversationId.slice(0, 8)}</Tag> : null}
+                            </div>
+                          </div>
+
+                          <div className={styles.turnRecordBlock}>
+                            <div className={styles.turnRecordLabel}>发送内容</div>
+                            <pre className={styles.turnRecordText}>{record.prompt}</pre>
+                          </div>
+
+                          <div className={styles.turnRecordBlock}>
+                            <div className={styles.turnRecordLabel}>agy 输出</div>
+                            <pre className={styles.turnRecordText}>{record.output || '(空输出)'}</pre>
+                          </div>
+
+                          <div className={styles.turnRecordBlock}>
+                            <div className={styles.turnRecordLabel}>文件变化</div>
+                            <div className={styles.roleHint}>{summarizeFileChanges(record.fileChanges)}</div>
                           </div>
                         </div>
-
-                        <div className={styles.turnRecordBlock}>
-                          <div className={styles.turnRecordLabel}>发送内容</div>
-                          <pre className={styles.turnRecordText}>{record.prompt}</pre>
-                        </div>
-
-                        <div className={styles.turnRecordBlock}>
-                          <div className={styles.turnRecordLabel}>agy 输出</div>
-                          <pre className={styles.turnRecordText}>{record.output || '(空输出)'}</pre>
-                        </div>
-
-                        <div className={styles.turnRecordBlock}>
-                          <div className={styles.turnRecordLabel}>文件变化</div>
-                          <div className={styles.roleHint}>{summarizeFileChanges(record.fileChanges)}</div>
+                      ))}
+                    </div>
+                    {turnRecords.length < turnRecordTotalCount ? (
+                      <div className={styles.historyActions}>
+                        <Button size='small' loading={historyLoadingState.turnRecords} onClick={() => void loadOlderHistory('turnRecords')}>
+                          再加载 50 条
+                        </Button>
+                        <Button size='small' disabled={historyLoadingState.turnRecords} onClick={() => void loadOlderHistory('turnRecords', true)}>
+                          查看全部
+                        </Button>
+                        <div className={styles.historyHint}>
+                          已加载 {turnRecords.length} / {turnRecordTotalCount} 条观察记录
                         </div>
                       </div>
-                    ))}
-                  </div>
-                ) : !startPromptRecords.length ? (
+                    ) : null}
+                  </>
+                ) : !displayedStartPromptRecords.length ? (
                   <div className={styles.queueEmpty}>
                     <Empty description='开始运行后，这里会记录每一轮的输入、输出和文件变化。' />
                   </div>

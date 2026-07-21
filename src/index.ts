@@ -13,6 +13,7 @@ import { initMainAdapterWithWindow } from './adapter/main';
 import { ipcBridge } from './common';
 import { initializeProcess } from './process';
 import { initializeAcpDetector } from './process/bridge';
+import { getRebuildChatRendererSnapshot } from './process/bridge/applicationBridge';
 import { registerWindowMaximizeListeners } from './process/bridge/windowControlsBridge';
 import { terminalService } from './process/bridge/terminalBridge';
 import WorkerManage from './process/WorkerManage';
@@ -26,6 +27,36 @@ import electronSquirrelStartup from 'electron-squirrel-startup';
 // whether you're running in development or production).
 declare const MAIN_WINDOW_WEBPACK_ENTRY: string;
 declare const MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
+
+const APP_RUNTIME_LOG_FILE = 'runtime.log';
+
+const formatRuntimeLogPayload = (payload: unknown): string => {
+  if (payload instanceof Error) {
+    return payload.stack || payload.message;
+  }
+
+  if (typeof payload === 'string') {
+    return payload;
+  }
+
+  try {
+    return JSON.stringify(payload);
+  } catch {
+    return String(payload);
+  }
+};
+
+const appendRuntimeLog = (scope: string, message: string, payload?: unknown) => {
+  try {
+    const logDir = app.getPath('logs');
+    const logPath = path.join(logDir, APP_RUNTIME_LOG_FILE);
+    const suffix = typeof payload === 'undefined' ? '' : ` ${formatRuntimeLogPayload(payload)}`;
+    fs.mkdirSync(logDir, { recursive: true });
+    fs.appendFileSync(logPath, `[${new Date().toISOString()}] [${scope}] ${message}${suffix}\n`, 'utf-8');
+  } catch {
+    // Ignore logging failures to avoid cascading process issues.
+  }
+};
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 // 修复 macOS 和 Linux 下 GUI 应用的 PATH 环境变量,使其与命令行一致
@@ -42,7 +73,8 @@ if (electronSquirrelStartup) {
 // Global error handlers for main process
 // 捕获未处理的同步异常，防止显示 Electron 默认错误对话框
 // Catch uncaught synchronous exceptions to prevent Electron's default error dialog
-process.on('uncaughtException', (_error) => {
+process.on('uncaughtException', (error) => {
+  appendRuntimeLog('main', 'uncaughtException', error);
   // 在生产环境中，可以将错误记录到文件或上报到错误追踪服务
   // In production, errors can be logged to file or sent to error tracking service
   if (process.env.NODE_ENV !== 'development') {
@@ -52,7 +84,8 @@ process.on('uncaughtException', (_error) => {
 
 // 捕获未处理的 Promise 拒绝，避免应用崩溃
 // Catch unhandled Promise rejections to prevent app crashes
-process.on('unhandledRejection', (_reason, _promise) => {
+process.on('unhandledRejection', (reason) => {
+  appendRuntimeLog('main', 'unhandledRejection', reason);
   // 可以在这里添加错误上报逻辑
   // Error reporting logic can be added here
 });
@@ -214,8 +247,36 @@ const createWindow = (): void => {
   void applyZoomToWindow(mainWindow);
   registerWindowMaximizeListeners(mainWindow);
 
+  mainWindow.on('unresponsive', () => {
+    appendRuntimeLog('window', 'BrowserWindow became unresponsive');
+  });
+
+  mainWindow.on('responsive', () => {
+    appendRuntimeLog('window', 'BrowserWindow recovered responsiveness');
+  });
+
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    appendRuntimeLog('renderer', 'render-process-gone', {
+      ...details,
+      rebuildChatSnapshot: getRebuildChatRendererSnapshot(),
+    });
+  });
+
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame) {
+      return;
+    }
+
+    appendRuntimeLog('renderer', 'did-fail-load', {
+      errorCode,
+      errorDescription,
+      validatedURL,
+    });
+  });
+
   // and load the index.html of the app.
-  mainWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY).catch((_error) => {
+  mainWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY).catch((error) => {
+    appendRuntimeLog('renderer', 'Failed to load main window URL', error);
     // Error loading main window URL
   });
 
@@ -322,6 +383,7 @@ app.on('before-quit', async (event) => {
     terminalService.disposeAll();
   } catch (error) {
     console.error('[App] Failed to cleanup on quit:', error);
+    appendRuntimeLog('main', 'Failed to cleanup on quit', error);
   }
   app.exit(0);
 });

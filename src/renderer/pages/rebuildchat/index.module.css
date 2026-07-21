@@ -1,385 +1,644 @@
+/* ============================================
+   RebuildChat 首板工作台 — 深色专业工作台主题
+   ============================================ */
+
+/* ---------- 设计令牌（.page 与抽屉 portal 共享） ---------- */
+.page,
+.configDrawer {
+  --rc-bg: #0e1013;
+  --rc-bg-panel: #15181d;
+  --rc-bg-card: #1b1f26;
+  --rc-bg-elevated: #22262f;
+  --rc-bg-input: #101318;
+  --rc-border: rgb(255 255 255 / 8%);
+  --rc-border-strong: rgb(255 255 255 / 16%);
+  --rc-text-primary: #e8ebf1;
+  --rc-text-secondary: #9aa3b5;
+  --rc-text-muted: #626b7d;
+  --rc-accent: #5b9dff;
+  --rc-accent-strong: #8fbaff;
+  --rc-accent-dim: rgb(91 157 255 / 14%);
+  --rc-success: #4cc38a;
+  --rc-success-dim: rgb(76 195 138 / 14%);
+  --rc-warning: #f5a524;
+  --rc-warning-dim: rgb(245 165 36 / 12%);
+  --rc-danger: #f2555a;
+  --rc-danger-dim: rgb(242 85 90 / 12%);
+  --rc-mono: ui-monospace, 'Cascadia Mono', Consolas, 'Courier New', monospace;
+}
+
+/* ---------- 页面基座 ---------- */
 .page {
-  --rc-page-max-height: 300vh;
-  --rc-page-bg: #191c22;
-  --rc-page-bg-soft: #232730;
-  --rc-surface-hero: linear-gradient(140deg, rgb(249 250 252 / 97%), rgb(235 239 245 / 96%));
-  --rc-surface-panel: linear-gradient(180deg, rgb(248 249 251 / 96%), rgb(237 240 245 / 95%));
-  --rc-surface-card: linear-gradient(180deg, rgb(252 252 253 / 98%), rgb(240 243 247 / 96%));
-  --rc-surface-subtle: rgb(244 246 249 / 92%);
-  --rc-surface-strong: rgb(230 234 241 / 94%);
-  --rc-input-bg: rgb(246 247 250 / 96%);
-  --rc-input-bg-strong: rgb(255 255 255 / 98%);
-  --rc-border-soft: rgb(129 145 167 / 20%);
-  --rc-border-strong: rgb(92 110 135 / 30%);
-  --rc-text-primary: #172033;
-  --rc-text-secondary: #47556e;
-  --rc-text-tertiary: #68778f;
-  --rc-text-muted: #7a879d;
-  --rc-text-inverse: #ebf2ff;
-  --rc-accent: #245ea9;
-  --rc-accent-strong: #17457f;
-  --rc-accent-soft: rgb(222 235 255 / 92%);
-  --rc-danger: #b54545;
-  --rc-danger-soft: rgb(255 231 231 / 92%);
-  --rc-warning-bg: rgb(255 246 223 / 96%);
-  --rc-warning-border: rgb(242 196 84 / 65%);
-  --rc-warning-text: #92400e;
-  height: auto;
   min-height: 100vh;
-  max-height: var(--rc-page-max-height);
-  padding: 24px;
+  padding: 16px 20px 28px;
   color: var(--rc-text-primary);
   overflow-x: hidden;
   overflow-y: auto;
-  background: radial-gradient(circle at top left, rgb(82 99 126 / 14%), transparent 24%), radial-gradient(circle at top right, rgb(97 122 157 / 10%), transparent 28%), linear-gradient(180deg, var(--rc-page-bg) 0%, var(--rc-page-bg-soft) 100%);
+  background: radial-gradient(900px 420px at 12% -8%, rgb(91 157 255 / 7%), transparent 60%), radial-gradient(760px 380px at 88% -6%, rgb(76 195 138 / 5%), transparent 55%), var(--rc-bg);
+  font-size: 14px;
+  line-height: 1.6;
 }
 
-.page :global(.arco-card-body),
-.page :global(.arco-typography),
-.page :global(.arco-empty-description),
+.shell {
+  max-width: 1600px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ============================================
+   Arco 深色覆盖（限定本页与配置抽屉作用域）
+   ============================================ */
+
 .page :global(.arco-btn),
-.page :global(.arco-tag),
-.page :global(.arco-checkbox-label),
-.page :global(.arco-input),
-.page :global(.arco-textarea) {
-  color: inherit;
-}
-
-.page :global(.arco-space-item) {
-  min-width: 0;
-}
-
-.page :global(.arco-card) {
-  overflow: hidden;
-}
-
-.page :global(.arco-btn) {
-  border-radius: 14px;
-  font-weight: 600;
-  border-color: var(--rc-border-strong);
-  background: var(--rc-surface-subtle);
+.configDrawer :global(.arco-btn) {
+  border-radius: 8px;
+  font-weight: 500;
+  border: 1px solid var(--rc-border-strong);
+  background: var(--rc-bg-elevated);
   color: var(--rc-text-primary);
-  box-shadow: 0 8px 24px rgb(15 23 42 / 10%);
+  box-shadow: none;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
 }
 
 .page :global(.arco-btn:hover),
-.page :global(.arco-btn:focus-visible) {
-  border-color: rgb(58 86 128 / 45%);
-  background: rgb(251 252 255 / 98%);
+.page :global(.arco-btn:focus-visible),
+.configDrawer :global(.arco-btn:hover),
+.configDrawer :global(.arco-btn:focus-visible) {
+  border-color: rgb(255 255 255 / 26%);
+  background: #2a2f3a;
   color: var(--rc-text-primary);
 }
 
-.page :global(.arco-btn.arco-btn-primary) {
-  border-color: rgb(37 94 169 / 78%);
-  background: linear-gradient(180deg, #4778bc, #2a5f9d);
-  color: #f7fbff;
-  box-shadow: 0 12px 30px rgb(36 94 169 / 28%);
-}
-
-.page :global(.arco-btn.arco-btn-primary:hover),
-.page :global(.arco-btn.arco-btn-primary:focus-visible) {
-  border-color: rgb(31 79 143 / 88%);
-  background: linear-gradient(180deg, #5588cd, #2f67a8);
+.page :global(.arco-btn.arco-btn-primary),
+.configDrawer :global(.arco-btn.arco-btn-primary) {
+  border-color: transparent;
+  background: #2f6fdd;
   color: #fff;
 }
 
-.page :global(.arco-btn.arco-btn-secondary) {
-  background: var(--rc-surface-subtle);
-  color: var(--rc-text-primary);
+.page :global(.arco-btn.arco-btn-primary:hover),
+.page :global(.arco-btn.arco-btn-primary:focus-visible),
+.configDrawer :global(.arco-btn.arco-btn-primary:hover),
+.configDrawer :global(.arco-btn.arco-btn-primary:focus-visible) {
+  border-color: transparent;
+  background: #4281ec;
+  color: #fff;
 }
 
-.page :global(.arco-btn-status-danger) {
-  border-color: rgb(181 69 69 / 34%);
-  background: var(--rc-danger-soft);
-  color: var(--rc-danger);
-  box-shadow: none;
+.page :global(.arco-btn-status-danger),
+.configDrawer :global(.arco-btn-status-danger) {
+  border-color: rgb(242 85 90 / 32%);
+  background: var(--rc-danger-dim);
+  color: #ff8a8e;
 }
 
 .page :global(.arco-btn-status-danger:hover),
-.page :global(.arco-btn-status-danger:focus-visible) {
-  border-color: rgb(181 69 69 / 50%);
-  background: rgb(255 222 222 / 98%);
-  color: #993737;
+.page :global(.arco-btn-status-danger:focus-visible),
+.configDrawer :global(.arco-btn-status-danger:hover),
+.configDrawer :global(.arco-btn-status-danger:focus-visible) {
+  border-color: rgb(242 85 90 / 55%);
+  background: rgb(242 85 90 / 20%);
+  color: #ffa3a6;
+}
+
+.page :global(.arco-btn.arco-btn-disabled),
+.page :global(.arco-btn.arco-btn-disabled:hover),
+.configDrawer :global(.arco-btn.arco-btn-disabled),
+.configDrawer :global(.arco-btn.arco-btn-disabled:hover) {
+  border-color: var(--rc-border);
+  background: var(--rc-bg-card);
+  color: var(--rc-text-muted);
+  cursor: not-allowed;
+}
+
+.page :global(.arco-btn.arco-btn-primary.arco-btn-disabled),
+.page :global(.arco-btn.arco-btn-primary.arco-btn-disabled:hover),
+.configDrawer :global(.arco-btn.arco-btn-primary.arco-btn-disabled),
+.configDrawer :global(.arco-btn.arco-btn-primary.arco-btn-disabled:hover) {
+  border-color: transparent;
+  background: rgb(47 111 221 / 32%);
+  color: rgb(255 255 255 / 45%);
 }
 
 .page :global(.arco-input-wrapper),
-.page :global(.arco-textarea-wrapper) {
-  border-color: var(--rc-border-soft);
-  border-radius: 14px;
-  background: var(--rc-input-bg);
+.page :global(.arco-textarea-wrapper),
+.configDrawer :global(.arco-input-wrapper),
+.configDrawer :global(.arco-textarea-wrapper) {
+  border: 1px solid var(--rc-border);
+  border-radius: 8px;
+  background: var(--rc-bg-input);
+  box-shadow: none;
 }
 
 .page :global(.arco-input-wrapper:hover),
 .page :global(.arco-textarea-wrapper:hover),
+.configDrawer :global(.arco-input-wrapper:hover),
+.configDrawer :global(.arco-textarea-wrapper:hover) {
+  border-color: var(--rc-border-strong);
+  background: var(--rc-bg-input);
+}
+
 .page :global(.arco-input-wrapper-focus),
-.page :global(.arco-textarea-wrapper-focus) {
-  border-color: rgb(36 94 169 / 46%);
-  background: var(--rc-input-bg-strong);
-  box-shadow: 0 0 0 3px rgb(36 94 169 / 10%);
+.page :global(.arco-textarea-wrapper-focus),
+.configDrawer :global(.arco-input-wrapper-focus),
+.configDrawer :global(.arco-textarea-wrapper-focus) {
+  border-color: rgb(91 157 255 / 60%);
+  background: var(--rc-bg-input);
+  box-shadow: 0 0 0 3px rgb(91 157 255 / 14%);
 }
 
 .page :global(.arco-input),
-.page :global(.arco-textarea) {
+.page :global(.arco-textarea),
+.configDrawer :global(.arco-input),
+.configDrawer :global(.arco-textarea) {
   color: var(--rc-text-primary);
   background: transparent;
 }
 
 .page :global(.arco-input::placeholder),
-.page :global(.arco-textarea::placeholder) {
+.page :global(.arco-textarea::placeholder),
+.configDrawer :global(.arco-input::placeholder),
+.configDrawer :global(.arco-textarea::placeholder) {
   color: var(--rc-text-muted);
 }
 
-.page :global(.arco-tag) {
-  border-radius: 10px;
-  border: 1px solid rgb(102 124 155 / 16%);
-  background: rgb(233 238 246 / 94%);
-  color: var(--rc-text-secondary);
+.page :global(.arco-input-wrapper.arco-input-disabled),
+.page :global(.arco-textarea-wrapper.arco-textarea-disabled),
+.configDrawer :global(.arco-input-wrapper.arco-input-disabled),
+.configDrawer :global(.arco-textarea-wrapper.arco-textarea-disabled) {
+  background: var(--rc-bg-card);
+  color: var(--rc-text-muted);
 }
 
-.page :global(.arco-tag-size-medium) {
-  font-weight: 600;
+.page :global(.arco-tag),
+.configDrawer :global(.arco-tag) {
+  border-radius: 6px;
+  border: 1px solid var(--rc-border);
+  background: var(--rc-bg-elevated);
+  color: var(--rc-text-secondary);
+  font-weight: 500;
 }
 
 .page :global(.arco-tag-checked),
-.page :global(.arco-tag-checkable-checked) {
-  border-color: rgb(36 94 169 / 34%);
-  background: var(--rc-accent-soft);
+.page :global(.arco-tag-checkable-checked),
+.configDrawer :global(.arco-tag-checked),
+.configDrawer :global(.arco-tag-checkable-checked) {
+  border-color: rgb(91 157 255 / 45%);
+  background: var(--rc-accent-dim);
   color: var(--rc-accent-strong);
 }
 
-.page :global(.arco-tag-blue) {
-  border-color: rgb(78 132 211 / 24%);
-  background: rgb(225 236 255 / 95%);
-  color: #2a5a97;
+.page :global(.arco-tag-checkable:hover),
+.configDrawer :global(.arco-tag-checkable:hover) {
+  background: #2a2f3a;
+  color: var(--rc-text-primary);
 }
 
-.page :global(.arco-tag-green) {
-  border-color: rgb(86 157 114 / 24%);
-  background: rgb(229 245 235 / 95%);
-  color: #2f6d48;
+.page :global(.arco-tag-blue),
+.configDrawer :global(.arco-tag-blue) {
+  border-color: rgb(91 157 255 / 30%);
+  background: var(--rc-accent-dim);
+  color: var(--rc-accent-strong);
 }
 
-.page :global(.arco-tag-orange) {
-  border-color: rgb(206 132 51 / 24%);
-  background: rgb(255 239 222 / 95%);
-  color: #9b5518;
+.page :global(.arco-tag-green),
+.configDrawer :global(.arco-tag-green) {
+  border-color: rgb(76 195 138 / 30%);
+  background: var(--rc-success-dim);
+  color: #6fd8a5;
 }
 
-.page :global(.arco-tag-gray) {
-  border-color: rgb(114 128 149 / 20%);
-  background: rgb(237 240 245 / 95%);
-  color: #59677d;
+.page :global(.arco-tag-orange),
+.configDrawer :global(.arco-tag-orange) {
+  border-color: rgb(245 165 36 / 30%);
+  background: var(--rc-warning-dim);
+  color: #f8bb54;
 }
 
-.page :global(.arco-checkbox-mask) {
-  border-color: rgb(100 116 139 / 40%);
-  background: rgb(255 255 255 / 94%);
+.page :global(.arco-tag-red),
+.configDrawer :global(.arco-tag-red) {
+  border-color: rgb(242 85 90 / 32%);
+  background: var(--rc-danger-dim);
+  color: #ff8a8e;
+}
+
+.page :global(.arco-tag-gold),
+.configDrawer :global(.arco-tag-gold) {
+  border-color: rgb(229 192 82 / 30%);
+  background: rgb(229 192 82 / 12%);
+  color: #eacf7a;
+}
+
+.page :global(.arco-tag-gray),
+.configDrawer :global(.arco-tag-gray) {
+  border-color: var(--rc-border);
+  background: var(--rc-bg-elevated);
+  color: var(--rc-text-muted);
+}
+
+.page :global(.arco-checkbox),
+.configDrawer :global(.arco-checkbox) {
+  color: var(--rc-text-primary);
+}
+
+.page :global(.arco-checkbox-mask),
+.configDrawer :global(.arco-checkbox-mask) {
+  border-color: var(--rc-border-strong);
+  background: var(--rc-bg-input);
 }
 
 .page :global(.arco-checkbox-checked .arco-checkbox-mask),
-.page :global(.arco-checkbox-indeterminate .arco-checkbox-mask) {
-  border-color: rgb(36 94 169 / 80%);
-  background: #336db1;
+.page :global(.arco-checkbox-indeterminate .arco-checkbox-mask),
+.configDrawer :global(.arco-checkbox-checked .arco-checkbox-mask),
+.configDrawer :global(.arco-checkbox-indeterminate .arco-checkbox-mask) {
+  border-color: var(--rc-accent);
+  background: var(--rc-accent);
 }
 
-.page :global(.arco-switch) {
-  background: rgb(130 143 161 / 40%);
+.page :global(.arco-switch),
+.configDrawer :global(.arco-switch) {
+  background: #3a4150;
 }
 
-.page :global(.arco-switch-checked) {
-  background: linear-gradient(180deg, #4f82c7, #2f68a8);
+.page :global(.arco-switch-checked),
+.configDrawer :global(.arco-switch-checked) {
+  background: #2f6fdd;
 }
 
 .page :global(.arco-empty-description) {
+  color: var(--rc-text-muted);
+}
+
+/* ---------- 配置抽屉（portal 渲染，独立作用域） ---------- */
+.configDrawer {
+  background: var(--rc-bg-panel);
+  border-left: 1px solid var(--rc-border);
+  color: var(--rc-text-primary);
+}
+
+.configDrawer :global(.arco-drawer-header) {
+  height: 56px;
+  border-bottom: 1px solid var(--rc-border);
+}
+
+.configDrawer :global(.arco-drawer-header-title) {
+  color: var(--rc-text-primary);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.configDrawer :global(.arco-drawer-close-btn) {
   color: var(--rc-text-secondary);
 }
 
-.shell {
-  max-width: 1440px;
-  height: auto;
-  min-height: calc(100vh - 48px);
-  max-height: calc(var(--rc-page-max-height) - 48px);
-  margin: 0 auto;
-  display: flex;
-  flex: 1 0 auto;
-  flex-direction: column;
-  gap: 16px;
-  min-height: 0;
+.configDrawer :global(.arco-drawer-close-btn:hover) {
+  color: var(--rc-text-primary);
+  background: var(--rc-bg-elevated);
 }
 
-.hero {
+.configDrawer :global(.arco-drawer-body) {
+  padding: 20px 24px 32px;
+  color: var(--rc-text-secondary);
+}
+
+.configBody {
   display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 24px 28px;
-  border: 1px solid rgb(255 255 255 / 14%);
-  border-radius: 24px;
-  background: radial-gradient(circle at top left, rgb(255 255 255 / 34%), transparent 38%), var(--rc-surface-hero);
-  box-shadow:
-    0 22px 54px rgb(4 11 24 / 24%),
-    inset 0 1px 0 rgb(255 255 255 / 48%);
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* ============================================
+   顶部状态栏
+   ============================================ */
+
+.topBar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  padding: 12px 16px;
+  border: 1px solid var(--rc-border);
+  border-radius: 12px;
+  background: rgb(18 21 26 / 96%);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 28%);
+}
+
+.topBarBrand {
   flex-shrink: 0;
-}
-
-.heroText {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
   min-width: 0;
 }
 
-.heroTitle {
-  font-size: 30px;
-  font-weight: 800;
-  color: #111827;
-  line-height: 1.15;
-  letter-spacing: -0.02em;
-  text-shadow: 0 1px 0 rgb(255 255 255 / 48%);
+.topBarTitle {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--rc-text-primary);
+  line-height: 1.3;
 }
 
-.heroDesc {
-  max-width: 860px;
-  color: #405068;
-  font-size: 14px;
-  line-height: 1.75;
+.topBarSubtitle {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--rc-text-muted);
+  line-height: 1.4;
 }
 
-.heroMeta {
+.topBarStatusGroup {
   display: flex;
   align-items: stretch;
-  gap: 10px;
   flex-wrap: wrap;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
-.heroMetaCard {
-  min-width: 150px;
-  padding: 14px 16px;
-  border-radius: 16px;
-  border: 1px solid var(--rc-border-soft);
-  background: rgb(251 252 253 / 92%);
-  box-shadow:
-    0 10px 24px rgb(29 42 62 / 8%),
-    inset 0 1px 0 rgb(255 255 255 / 62%);
+.topStat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--rc-border);
+  border-radius: 8px;
+  background: var(--rc-bg-card);
+  min-width: 0;
 }
 
-.heroMetaLabel {
-  font-size: 12px;
+.topStatWide {
+  flex: 1 1 180px;
+  max-width: 340px;
+}
+
+.topStatBody {
+  min-width: 0;
+}
+
+.topStatLabel {
+  font-size: 11px;
+  color: var(--rc-text-muted);
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.topStatValue {
+  font-size: 15px;
   font-weight: 700;
-  color: #627086;
-  letter-spacing: 0.02em;
+  color: var(--rc-text-primary);
+  line-height: 1.35;
+  white-space: nowrap;
 }
 
-.heroMetaValue {
-  margin-top: 8px;
-  font-size: 22px;
-  font-weight: 800;
-  color: #142033;
-  line-height: 1.2;
+.topStatValueSmall {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--rc-text-primary);
+  line-height: 1.4;
+  white-space: nowrap;
 }
 
-.heroMetaValueSmall {
-  margin-top: 8px;
-  font-size: 14px;
-  font-weight: 800;
-  color: #142033;
-  line-height: 1.5;
+.topStatValueMono {
+  font-family: var(--rc-mono);
+  font-size: 12px;
+  color: var(--rc-text-secondary);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.grid {
+.statusDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--rc-text-muted);
+}
+
+.statusToneIdle .statusDot {
+  background: var(--rc-text-muted);
+}
+
+.statusToneRunning .statusDot {
+  background: var(--rc-accent);
+  box-shadow: 0 0 0 0 rgb(91 157 255 / 45%);
+  animation: rcPulse 1.6s ease-out infinite;
+}
+
+.statusToneRunning .topStatValue {
+  color: var(--rc-accent-strong);
+}
+
+.statusToneStopping .statusDot,
+.statusTonePaused .statusDot,
+.statusToneWaiting .statusDot {
+  background: var(--rc-warning);
+}
+
+.statusToneStopping .topStatValue,
+.statusTonePaused .topStatValue,
+.statusToneWaiting .topStatValue {
+  color: #f8bb54;
+}
+
+.statusToneCompleted .statusDot {
+  background: var(--rc-success);
+}
+
+.statusToneCompleted .topStatValue {
+  color: #6fd8a5;
+}
+
+.statusToneFailed .statusDot {
+  background: var(--rc-danger);
+}
+
+.statusToneFailed .topStatValue {
+  color: #ff8a8e;
+}
+
+@keyframes rcPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgb(91 157 255 / 45%);
+  }
+
+  70% {
+    box-shadow: 0 0 0 7px rgb(91 157 255 / 0%);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgb(91 157 255 / 0%);
+  }
+}
+
+.topBarActions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.configButton {
+  margin-left: 4px;
+}
+
+/* ---------- 额度等待横幅 ---------- */
+.waitNotice {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 16px;
+  border: 1px solid rgb(245 165 36 / 32%);
+  border-left: 3px solid var(--rc-warning);
+  border-radius: 10px;
+  background: var(--rc-warning-dim);
+  color: #f8bb54;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+/* ============================================
+   三栏工作区
+   ============================================ */
+
+.workspace {
   display: grid;
-  grid-template-columns: minmax(300px, 360px) minmax(480px, 1.2fr) minmax(340px, 420px);
-  gap: 16px;
-  flex: 1 0 auto;
-  min-height: 0;
+  grid-template-columns: minmax(300px, 340px) minmax(460px, 1fr) minmax(360px, 440px);
+  gap: 14px;
   align-items: start;
 }
 
 .column {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  min-width: 0;
-  min-height: 0;
-}
-
-.leftColumn {
-  padding-right: 2px;
-}
-
-.leftColumn,
-.middleColumn,
-.rightColumn {
-  overflow: visible;
-}
-
-.rightColumn {
   gap: 14px;
+  min-width: 0;
 }
 
+/* ---------- 面板基座 ---------- */
 .panel {
-  border: 1px solid rgb(255 255 255 / 10%);
-  border-radius: 20px;
-  background: var(--rc-surface-panel);
-  box-shadow:
-    0 18px 42px rgb(6 12 24 / 22%),
-    inset 0 1px 0 rgb(255 255 255 / 46%);
-  min-height: 0;
+  border: 1px solid var(--rc-border);
+  border-radius: 12px;
+  background: var(--rc-bg-panel);
+  overflow: hidden;
 }
 
-.panel :global(.arco-card-body) {
-  background: linear-gradient(180deg, rgb(248 249 251 / 96%), rgb(237 240 245 / 95%)), transparent;
-  color: var(--rc-text-primary);
-}
-
-.editPanel,
-.observePanel {
+.panelGrow {
   display: flex;
   flex-direction: column;
-  flex: 0 1 auto;
-  min-height: 0;
 }
 
-.editPanel :global(.arco-card-body),
-.observePanel :global(.arco-card-body) {
+.panelHeader {
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--rc-border);
+}
+
+.panelTitleRow {
   display: flex;
-  flex-direction: column;
-  min-height: 0;
-  flex: 1;
-}
-
-.runPanel {
-  flex-shrink: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .panelTitle {
-  font-size: 17px;
-  font-weight: 800;
-  color: #162033;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--rc-text-primary);
+  line-height: 1.4;
 }
 
 .panelDesc {
-  margin-top: 6px;
-  color: #4f5f76;
-  font-size: 13px;
-  line-height: 1.7;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--rc-text-muted);
+  line-height: 1.6;
+}
+
+.panelBody {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px 16px;
+}
+
+.panelBodyGrow {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ---------- 通用控件 ---------- */
+.buttonRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .pathBox {
-  padding: 12px 14px;
-  border-radius: 14px;
-  border: 1px solid var(--rc-border-soft);
-  background: var(--rc-input-bg);
-  font-size: 13px;
-  font-weight: 500;
+  padding: 10px 12px;
+  border: 1px solid var(--rc-border);
+  border-radius: 8px;
+  background: var(--rc-bg-input);
+  font-family: var(--rc-mono);
+  font-size: 12px;
   line-height: 1.6;
-  color: #35445b;
+  color: var(--rc-text-secondary);
   word-break: break-all;
 }
 
-.inlinePicker {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
+.hintBox {
+  padding: 8px 12px;
+  border: 1px solid rgb(91 157 255 / 24%);
+  border-radius: 8px;
+  background: var(--rc-accent-dim);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--rc-accent-strong);
+}
+
+.notice {
+  padding: 10px 12px;
+  border: 1px solid rgb(245 165 36 / 28%);
+  border-radius: 8px;
+  background: var(--rc-warning-dim);
+  color: #f8bb54;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.fieldRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.fieldLabel {
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--rc-text-secondary);
+  line-height: 1.4;
+}
+
+.fieldRow .fieldLabel {
+  margin-bottom: 0;
+}
+
+.fieldHint {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--rc-text-muted);
 }
 
 .roleWrap {
@@ -388,49 +647,72 @@
   gap: 8px;
 }
 
-.roleHint {
-  font-size: 12px;
-  line-height: 1.6;
-  color: #66758c;
+.inlinePicker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
 }
 
-.notice {
-  padding: 12px 14px;
-  border-radius: 14px;
-  border: 1px solid var(--rc-warning-border);
-  background: var(--rc-warning-bg);
-  color: var(--rc-warning-text);
-  font-size: 13px;
-  line-height: 1.65;
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 42%);
-}
-
-.waitNotice {
-  padding: 14px 16px;
-  border-radius: 16px;
-  border: 1px solid rgb(208 152 54 / 34%);
-  background: linear-gradient(180deg, rgb(255 247 227 / 96%), rgb(255 239 209 / 92%));
-  color: #8f4c12;
-  font-size: 13px;
-  line-height: 1.7;
+.emptyBox {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 44%);
+  align-items: center;
+  justify-content: center;
+  padding: 36px 20px;
+  border: 1px dashed var(--rc-border-strong);
+  border-radius: 10px;
+  background: var(--rc-bg-card);
+  flex: 1;
 }
 
+/* ---------- 解析摘要 ---------- */
+.statGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.statCell {
+  padding: 10px 12px;
+  border: 1px solid var(--rc-border);
+  border-radius: 8px;
+  background: var(--rc-bg-card);
+}
+
+.statValue {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--rc-text-primary);
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+}
+
+.statLabel {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--rc-text-muted);
+  line-height: 1.4;
+}
+
+/* ---------- 任务列表 ---------- */
 .taskList {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
+  max-height: 320px;
+  overflow: auto;
+  padding-right: 4px;
 }
 
 .taskCard {
-  padding: 14px;
-  border: 1px solid var(--rc-border-soft);
-  border-radius: 18px;
-  background: var(--rc-surface-card);
-  box-shadow: 0 10px 24px rgb(17 27 44 / 8%);
+  padding: 12px;
+  border: 1px solid var(--rc-border);
+  border-radius: 10px;
+  background: var(--rc-bg-card);
+  transition: border-color 0.15s ease;
+}
+
+.taskCard:hover {
+  border-color: var(--rc-border-strong);
 }
 
 .taskHeader {
@@ -441,23 +723,25 @@
 }
 
 .taskTitle {
-  font-size: 15px;
-  font-weight: 800;
-  color: #1a2740;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--rc-text-primary);
+  line-height: 1.4;
+  word-break: break-all;
 }
 
 .taskMeta {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-top: 8px;
+  margin-top: 6px;
 }
 
 .taskMetaText {
-  margin-top: 10px;
-  font-size: 12px;
-  line-height: 1.65;
-  color: #627086;
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--rc-text-muted);
   word-break: break-all;
 }
 
@@ -465,26 +749,55 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 12px;
+  margin-top: 10px;
+}
+
+/* ---------- 编辑队列 ---------- */
+.queueStatsBar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 8px 12px;
+  border: 1px solid var(--rc-border);
+  border-radius: 8px;
+  background: var(--rc-bg-card);
+  font-size: 12px;
+  color: var(--rc-text-muted);
+}
+
+.queueStat {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.queueStatValue {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--rc-text-primary);
+  font-variant-numeric: tabular-nums;
 }
 
 .queueList {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  flex: 0 1 auto;
-  min-height: 0;
-  max-height: min(180vh, 2200px);
+  gap: 10px;
+  max-height: max(360px, calc(100vh - 380px));
   overflow: auto;
-  padding-right: 6px;
+  padding-right: 4px;
 }
 
 .queueCard {
-  border: 1px solid var(--rc-border-soft);
-  border-radius: 18px;
-  background: var(--rc-surface-card);
-  padding: 16px;
-  box-shadow: 0 14px 34px rgb(17 27 44 / 9%);
+  padding: 12px 14px;
+  border: 1px solid var(--rc-border);
+  border-radius: 10px;
+  background: var(--rc-bg-card);
+  transition: border-color 0.15s ease;
+}
+
+.queueCard:hover {
+  border-color: var(--rc-border-strong);
 }
 
 .queueHeader {
@@ -492,19 +805,22 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .queueHeaderLeft {
   display: flex;
   align-items: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 8px;
   min-width: 0;
-  color: #223047;
 }
 
-.queueHeaderLeft :global(.arco-typography) {
-  color: #223047;
+.queueIndex {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--rc-text-primary);
+  white-space: nowrap;
 }
 
 .queueMeta {
@@ -515,98 +831,54 @@
 
 .queueRow {
   display: grid;
-  grid-template-columns: 160px minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 10px;
   align-items: start;
 }
 
-.queueEmpty {
-  padding: 40px 20px;
-  border: 1px dashed rgb(119 136 160 / 32%);
-  border-radius: 18px;
-  background: rgb(243 246 249 / 78%);
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.configGrid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.toggleGrid {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.toggleRow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px 14px;
-  border-radius: 14px;
-  border: 1px solid var(--rc-border-soft);
-  background: rgb(244 246 249 / 88%);
-}
-
-.toggleTitle {
-  font-size: 14px;
-  font-weight: 800;
-  color: #1c2840;
-}
-
-.runtimeSummary {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
+/* ---------- 运行日志 ---------- */
 .logPanel {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  max-height: min(72vh, 640px);
+  gap: 6px;
+  height: 300px;
   overflow: auto;
-  padding: 14px;
-  border-radius: 16px;
-  border: 1px solid rgb(94 117 151 / 24%);
-  background: linear-gradient(180deg, rgb(12 20 33 / 96%), rgb(19 30 47 / 94%));
-  color: var(--rc-text-inverse);
+  padding: 12px;
+  border: 1px solid var(--rc-border);
+  border-radius: 10px;
+  background: #0a0c10;
 }
 
 .logRow {
   display: grid;
-  grid-template-columns: 72px 56px minmax(0, 1fr);
+  grid-template-columns: 76px 64px minmax(0, 1fr);
   gap: 10px;
+  font-family: var(--rc-mono);
   font-size: 12px;
   line-height: 1.7;
 }
 
 .logTime {
-  color: rgb(156 172 196);
+  color: var(--rc-text-muted);
+  white-space: nowrap;
 }
 
 .logKind {
   font-weight: 700;
   text-transform: uppercase;
-  color: rgb(137 205 255);
+  color: var(--rc-accent-strong);
+  white-space: nowrap;
 }
 
 .logText {
-  color: rgb(227 235 248);
+  color: #c9d3e3;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
 .logPlaceholder {
-  color: rgb(164 179 199);
-  font-size: 13px;
+  color: var(--rc-text-muted);
+  font-size: 12px;
 }
 
 .historyActions {
@@ -619,171 +891,177 @@
 .historyHint {
   font-size: 12px;
   line-height: 1.6;
-  color: #627086;
+  color: var(--rc-text-muted);
 }
 
+/* ---------- 观察区记录 ---------- */
 .turnRecordList {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  flex: 0 1 auto;
-  min-height: 0;
-  max-height: min(140vh, 1600px);
+  gap: 10px;
+  max-height: max(300px, calc(100vh - 480px));
   overflow: auto;
-  padding-right: 6px;
+  padding-right: 4px;
 }
 
 .turnRecordCard {
-  border: 1px solid var(--rc-border-soft);
-  border-radius: 18px;
-  background: var(--rc-surface-card);
-  padding: 16px;
-  box-shadow: 0 14px 34px rgb(17 27 44 / 9%);
+  padding: 12px 14px;
+  border: 1px solid var(--rc-border);
+  border-radius: 10px;
+  background: var(--rc-bg-card);
 }
 
 .turnRecordHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  color: #223047;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
-.turnRecordHeader :global(.arco-typography) {
-  color: #223047;
+.turnRecordTitle {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--rc-text-primary);
 }
 
 .turnRecordBlock {
-  margin-top: 12px;
+  margin-top: 10px;
 }
 
 .turnRecordLabel {
-  font-size: 12px;
-  font-weight: 700;
-  color: #617086;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--rc-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .turnRecordText {
   margin: 0;
-  padding: 12px;
-  border-radius: 14px;
-  border: 1px solid rgb(115 131 153 / 18%);
-  background: rgb(243 246 249 / 94%);
-  color: #253348;
+  padding: 10px 12px;
+  border: 1px solid var(--rc-border);
+  border-radius: 8px;
+  background: var(--rc-bg-input);
+  color: #c9d3e3;
+  font-family: var(--rc-mono);
   font-size: 12px;
   line-height: 1.7;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
-.editPanelBody,
-.observePanelBody {
+/* ---------- 运行配置抽屉内部 ---------- */
+.configGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 12px;
+}
+
+.toggleGrid {
   display: flex;
   flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-  overflow: hidden;
+  gap: 10px;
 }
 
-.editPanelBody > :global(.arco-space-item:last-child),
-.observePanelBody > :global(.arco-space-item:last-child) {
+.toggleRow {
   display: flex;
-  flex: 1;
-  min-height: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--rc-border);
+  border-radius: 10px;
+  background: var(--rc-bg-card);
 }
 
+.toggleTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--rc-text-primary);
+  line-height: 1.4;
+}
+
+/* ---------- 滚动条 ---------- */
 .queueList,
 .turnRecordList,
+.taskList,
 .logPanel {
   scrollbar-gutter: stable;
   scrollbar-width: thin;
-  scrollbar-color: rgb(111 129 155 / 78%) rgb(226 232 240 / 44%);
+  scrollbar-color: #3a4150 transparent;
   overscroll-behavior: contain;
 }
 
 .queueList::-webkit-scrollbar,
 .turnRecordList::-webkit-scrollbar,
+.taskList::-webkit-scrollbar,
 .logPanel::-webkit-scrollbar {
-  width: 10px;
+  width: 8px;
 }
 
 .queueList::-webkit-scrollbar-track,
 .turnRecordList::-webkit-scrollbar-track,
+.taskList::-webkit-scrollbar-track,
 .logPanel::-webkit-scrollbar-track {
-  background: rgb(226 232 240 / 52%);
-  border-radius: 999px;
+  background: transparent;
 }
 
 .queueList::-webkit-scrollbar-thumb,
 .turnRecordList::-webkit-scrollbar-thumb,
+.taskList::-webkit-scrollbar-thumb,
 .logPanel::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, rgb(113 133 160 / 88%), rgb(83 102 128 / 92%));
+  background: #3a4150;
   border-radius: 999px;
-  border: 2px solid transparent;
-  background-clip: padding-box;
 }
 
 .queueList::-webkit-scrollbar-thumb:hover,
 .turnRecordList::-webkit-scrollbar-thumb:hover,
+.taskList::-webkit-scrollbar-thumb:hover,
 .logPanel::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, rgb(93 114 143 / 92%), rgb(65 85 112 / 96%));
-  background-clip: padding-box;
+  background: #4a5265;
+}
+
+/* ============================================
+   响应式
+   ============================================ */
+
+@media (max-width: 1280px) {
+  .workspace {
+    grid-template-columns: minmax(280px, 320px) minmax(400px, 1fr) minmax(320px, 380px);
+  }
 }
 
 @media (max-width: 1024px) {
-  .page {
-    height: auto;
-    min-height: 100%;
-    overflow: visible;
-  }
-
-  .shell {
-    height: auto;
-  }
-
-  .grid {
+  .workspace {
     grid-template-columns: 1fr;
-    flex: initial;
-  }
-
-  .hero {
-    flex-direction: column;
-  }
-
-  .leftColumn,
-  .middleColumn,
-  .rightColumn {
-    overflow: visible;
-  }
-
-  .editPanel,
-  .observePanel,
-  .runPanel {
-    flex: initial;
   }
 
   .queueList,
-  .turnRecordList {
-    overflow: visible;
+  .turnRecordList,
+  .taskList {
     max-height: none;
+    overflow: visible;
     padding-right: 0;
+  }
+
+  .topBar {
+    position: static;
   }
 }
 
 @media (max-width: 768px) {
   .page {
-    padding: 16px;
+    padding: 12px 12px 20px;
   }
 
-  .hero {
-    padding: 18px;
-    border-radius: 18px;
+  .topBar {
+    padding: 10px 12px;
   }
 
-  .heroTitle {
-    font-size: 24px;
+  .topBarActions {
+    margin-left: 0;
   }
 
   .queueRow {
@@ -794,21 +1072,8 @@
     grid-template-columns: 1fr;
   }
 
-  .runtimeSummary {
-    grid-template-columns: 1fr;
-  }
-
-  .toggleRow {
-    align-items: flex-start;
-  }
-
   .logRow {
     grid-template-columns: 1fr;
-    gap: 4px;
-  }
-
-  .turnRecordHeader {
-    flex-direction: column;
-    align-items: flex-start;
+    gap: 2px;
   }
 }
